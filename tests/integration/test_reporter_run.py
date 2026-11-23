@@ -53,9 +53,9 @@ def _run(
     env = {
         "PATH": os.environ["PATH"],
         "REPORTER_RUCIO_HOST": rucio_url,
-        "REPORTER_RUCIO_ACCOUNT": "reporter",
-        "REPORTER_RUCIO_USERNAME": "reporter",
-        "REPORTER_RUCIO_PASSWORD": "secret",
+        "REPORTER_RUCIO_TOKEN_URL": f"{keycloak_url}/realms/dep/protocol/openid-connect/token",
+        "REPORTER_RUCIO_CLIENT_ID": "usage-reporter-rucio",
+        "REPORTER_RUCIO_CLIENT_SECRET": "rucio-reporter-secret",
         "REPORTER_ARGO_ENDPOINT": argo_url,
         "REPORTER_ARGO_METRIC_DEFINITION_ID": DEFINITION,
         "REPORTER_ARGO_TOKEN_URL": f"{keycloak_url}/realms/dep/protocol/openid-connect/token",

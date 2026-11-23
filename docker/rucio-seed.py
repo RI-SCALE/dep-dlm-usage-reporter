@@ -11,7 +11,7 @@ data with its default window:
   suc2-prod    RI-SCALE_ENES / suc2               7 bytes, plus one FAILED
   suc3-prod    RI-SCALE_EISCAT / suc3             20 bytes
   ghost        none (unmapped)                    30 bytes
-  reporter     admin, userpass reporter/secret    -
+  reporter     admin; OIDC identity of Keycloak client usage-reporter-rucio
 """
 
 import datetime
@@ -29,6 +29,9 @@ from rucio.db.sqla.session import get_engine, get_session
 from rucio.db.sqla.util import create_base_vo, create_root_account
 
 RSES = ("CERN_DATADISK", "TUBITAK_DATADISK", "TUWIEN_DATADISK")
+REPORTER_OIDC = (
+    "SUB=4b7d6f0e-2a51-4c8e-9a3f-1e5d7c9b2a60, ISS=http://keycloak:8080/realms/dep"
+)
 ACCOUNTS = {
     "suc1-prod": {"project_id": "RI-SCALE_ENES", "group_id": "suc1"},
     "suc2-prod": {"project_id": "RI-SCALE_ENES", "group_id": "suc2"},
@@ -71,8 +74,8 @@ def main():
         _ignore_duplicate(add_account, name, "SERVICE", "dlm@example.org", issuer="root")
         for key, value in attrs.items():
             _ignore_duplicate(add_account_attribute, key, value, name, issuer="root")
-    _ignore_duplicate(add_account_identity, "reporter", "USERPASS", "reporter",
-                      "dlm@example.org", issuer="root", password="secret")
+    _ignore_duplicate(add_account_identity, REPORTER_OIDC, "OIDC", "reporter",
+                      "dlm@example.org", issuer="root", default=True)
 
     day = _seed_day()
     at = lambda h, m=0, s=0: datetime.datetime(day.year, day.month, day.day, h, m, s)  # noqa: E731

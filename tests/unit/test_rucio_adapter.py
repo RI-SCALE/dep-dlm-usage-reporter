@@ -1,7 +1,9 @@
 """Rucio REST adapter against httpx.MockTransport (Design-001, "Testing").
 
 Response shapes mirror rucio-server 41.2.1: NDJSON streams, RFC 1123 times,
-the token in X-Rucio-Auth-Token, 404 for unknown accounts.
+404 for unknown accounts. Authentication is an OIDC client-credentials token
+in X-Rucio-Auth-Token (Design-001, step 6), fetched from a fake IdP through
+the real token adapter.
 """
 
 from __future__ import annotations
@@ -18,7 +20,9 @@ from usage_reporter.adapters.rucio import (
     RucioClient,
     RucioError,
     RucioRestSource,
+    rucio_token_auth,
 )
+from usage_reporter.adapters.token import ClientCredentials, TokenError
 from usage_reporter.core.model import Group, Transfer
 
 START = datetime(2026, 11, 22, tzinfo=UTC)
@@ -42,20 +46,15 @@ class FakeRucio:
         self.rses = sorted({rse for pair in history for rse in pair} | {"CERN_DATADISK"})
         self.attributes: dict[str, list[dict[str, object]]] = {}
         self.calls: list[httpx.Request] = []
-        self.tokens = 0
-        self.expire_next = False
+        self.rejected: set[str] = set()  # tokens answered with 401
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.calls.append(request)
         path = request.url.path
-        if path == "/auth/userpass":
-            assert request.headers["X-Rucio-Username"] == "reporter"
-            self.tokens += 1
-            return httpx.Response(200, headers={"X-Rucio-Auth-Token": f"tok-{self.tokens}"})
-        if self.expire_next:
-            self.expire_next = False
+        token = request.headers.get("X-Rucio-Auth-Token", "")
+        assert "X-Rucio-Username" not in request.headers  # no userpass any more
+        if not token.startswith("jwt-") or token in self.rejected:
             return httpx.Response(401)
-        assert request.headers["X-Rucio-Auth-Token"].startswith("tok-")
         # Like rucio-server: streams need NDJSON, the attribute list needs JSON.
         wants = "application/json" if path.endswith("/attr/") else "application/x-json-stream"
         if request.headers.get("Accept") != wants:
@@ -76,12 +75,33 @@ class FakeRucio:
         return httpx.Response(500)
 
 
-def _client(fake: Callable[[httpx.Request], httpx.Response]) -> RucioClient:
+class FakeIdP:
+    """Client-credentials token endpoint issuing jwt-1, jwt-2, ..."""
+
+    def __init__(self, status: int = 200) -> None:
+        self.status = status
+        self.issued = 0
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        assert b"grant_type=client_credentials" in request.content
+        if self.status != 200:
+            return httpx.Response(self.status, json={"error": "invalid_client"})
+        self.issued += 1
+        return httpx.Response(200, json={"access_token": f"jwt-{self.issued}", "expires_in": 3600})
+
+
+def _client(
+    fake: Callable[[httpx.Request], httpx.Response], idp: FakeIdP | None = None
+) -> RucioClient:
+    credentials = ClientCredentials(
+        "https://idp.example/token",
+        "usage-reporter-rucio",
+        "s3cret",
+        transport=httpx.MockTransport(idp or FakeIdP()),
+    )
     return RucioClient(
         host="https://rucio.example",
-        account="reporter",
-        username="reporter",
-        password="secret",
+        auth=rucio_token_auth(credentials),
         transport=httpx.MockTransport(fake),
     )
 
@@ -142,29 +162,37 @@ class TestRucioRestSource:
         rses = fake.rses
         assert pairs == {(s, d) for s in rses for d in rses if s != d}
 
-    def test_refreshes_an_expired_token_once(self) -> None:
+    def test_sends_the_raw_token_and_fetches_it_once(self) -> None:
+        fake, idp = FakeRucio({("A", "B"): []}), FakeIdP()
+        list(RucioRestSource(_client(fake, idp)).finished_transfers(START, END))
+        assert {c.headers["X-Rucio-Auth-Token"] for c in fake.calls} == {"jwt-1"}
+        assert idp.issued == 1
+
+    def test_refreshes_a_rejected_token_once(self) -> None:
+        fake, idp = FakeRucio({}), FakeIdP()
+        fake.rejected.add("jwt-1")
+        list(RucioRestSource(_client(fake, idp)).finished_transfers(START, END))
+        assert idp.issued == 2
+
+    def test_a_token_rucio_never_accepts_raises(self) -> None:
         fake = FakeRucio({})
-        client = _client(fake)
-        list(RucioRestSource(client).finished_transfers(START, END))
-        fake.expire_next = True
-        list(RucioRestSource(client).finished_transfers(START, END))
-        assert fake.tokens == 2
+        fake.rejected.update({"jwt-1", "jwt-2"})
+        with pytest.raises(RucioError, match="401"):
+            list(RucioRestSource(_client(fake)).finished_transfers(START, END))
+
+    def test_a_failing_token_endpoint_raises(self) -> None:
+        with pytest.raises(TokenError, match="401"):
+            list(
+                RucioRestSource(_client(FakeRucio({}), FakeIdP(401))).finished_transfers(START, END)
+            )
 
     def test_server_error_raises(self) -> None:
-        client = _client(
-            lambda request: (
-                httpx.Response(200, headers={"X-Rucio-Auth-Token": "tok-1"})
-                if request.url.path == "/auth/userpass"
-                else httpx.Response(503)
-            )
-        )
         with pytest.raises(RucioError, match="503"):
-            list(RucioRestSource(client).finished_transfers(START, END))
-
-    def test_failed_login_raises(self) -> None:
-        client = _client(lambda request: httpx.Response(401))
-        with pytest.raises(RucioError, match="401"):
-            list(RucioRestSource(client).finished_transfers(START, END))
+            list(
+                RucioRestSource(_client(lambda request: httpx.Response(503))).finished_transfers(
+                    START, END
+                )
+            )
 
 
 class TestRucioAttributeMapping:

@@ -13,7 +13,12 @@ from datetime import UTC, datetime
 from pydantic import ValidationError
 
 from usage_reporter.adapters.argo import ArgoProject, ArgoSink
-from usage_reporter.adapters.rucio import RucioAttributeMapping, RucioClient, RucioRestSource
+from usage_reporter.adapters.rucio import (
+    RucioAttributeMapping,
+    RucioClient,
+    RucioRestSource,
+    rucio_token_auth,
+)
 from usage_reporter.adapters.stdout import StdoutSink
 from usage_reporter.adapters.token import ClientCredentials, TokenAuth
 from usage_reporter.core.ports import AccountingSink
@@ -63,11 +68,16 @@ def main() -> int:
     today = datetime.now(UTC).date()
     days = [settings.day] if settings.day else window(today, settings.lookback_days)
     log.info("reporting days=%s dry_run=%s", [d.isoformat() for d in days], settings.dry_run)
+    rucio_credentials = ClientCredentials(
+        settings.rucio_token_url,
+        settings.rucio_client_id,
+        settings.rucio_client_secret.get_secret_value(),
+        scope=settings.rucio_scope,
+        timeout_seconds=settings.timeout_seconds,
+    )
     rucio = RucioClient(
         settings.rucio_host,
-        settings.rucio_account,
-        settings.rucio_username,
-        settings.rucio_password.get_secret_value(),
+        rucio_token_auth(rucio_credentials),
         timeout_seconds=settings.timeout_seconds,
     )
     try:
@@ -83,6 +93,7 @@ def main() -> int:
         return 4
     finally:
         rucio.close()
+        rucio_credentials.close()
         if isinstance(sink, ArgoSink):
             sink.close()
 

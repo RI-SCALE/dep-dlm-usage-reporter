@@ -1,8 +1,10 @@
 """Rucio adapter and core against a real rucio-server seeded by
-docker/rucio-seed.py (Design-001, step 3).
+docker/rucio-seed.py (Design-001, steps 3 and 6).
 
-The `rucio_url` fixture (conftest.py) starts docker/docker-compose.yml through
-testcontainers, or uses REPORTER_TEST_RUCIO_URL if a stack is already up.
+The `rucio_url` and `keycloak_url` fixtures (conftest.py) start
+docker/docker-compose.yml through testcontainers, or reuse a running stack.
+The client authenticates with an OIDC client-credentials token from Keycloak,
+which Rucio maps to the `reporter` account by SUB/ISS.
 """
 
 from __future__ import annotations
@@ -12,7 +14,13 @@ from collections.abc import Iterator
 import pytest
 
 from tests.integration.conftest import SEED_DAY
-from usage_reporter.adapters.rucio import RucioAttributeMapping, RucioClient, RucioRestSource
+from usage_reporter.adapters.rucio import (
+    RucioAttributeMapping,
+    RucioClient,
+    RucioRestSource,
+    rucio_token_auth,
+)
+from usage_reporter.adapters.token import ClientCredentials
 from usage_reporter.core.aggregate import aggregate
 from usage_reporter.core.window import day_bounds
 
@@ -22,10 +30,16 @@ KNOWN = frozenset({"RI-SCALE_ENES", "RI-SCALE_EISCAT"})
 
 
 @pytest.fixture
-def client(rucio_url: str) -> Iterator[RucioClient]:
-    client = RucioClient(host=rucio_url, account="reporter", username="reporter", password="secret")
+def client(rucio_url: str, keycloak_url: str) -> Iterator[RucioClient]:
+    credentials = ClientCredentials(
+        f"{keycloak_url}/realms/dep/protocol/openid-connect/token",
+        "usage-reporter-rucio",
+        "rucio-reporter-secret",
+    )
+    client = RucioClient(rucio_url, rucio_token_auth(credentials))
     yield client
     client.close()
+    credentials.close()
 
 
 def test_seeded_day_aggregates_per_project_and_use_case(client: RucioClient) -> None:

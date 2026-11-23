@@ -23,9 +23,9 @@ PROJECTS = {
 def env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     for key, value in {
         "REPORTER_RUCIO_HOST": "http://rucio",
-        "REPORTER_RUCIO_ACCOUNT": "reporter",
-        "REPORTER_RUCIO_USERNAME": "reporter",
-        "REPORTER_RUCIO_PASSWORD": "rucio-pw",
+        "REPORTER_RUCIO_TOKEN_URL": "http://keycloak/token",
+        "REPORTER_RUCIO_CLIENT_ID": "usage-reporter-rucio",
+        "REPORTER_RUCIO_CLIENT_SECRET": "rucio-pw",
         "REPORTER_ARGO_METRIC_DEFINITION_ID": "6afc3e7801adaea4c9c12777",
         "REPORTER_ARGO_TOKEN_URL": "http://keycloak/token",
         "REPORTER_PROJECTS": json.dumps(PROJECTS),

@@ -1,7 +1,8 @@
 """REPORTER_* configuration, validated at startup (Design-001, "Configuration").
 
-Secrets come from environment variables only: the Rucio password, and one
-ARGO client secret per project in the variable its `client_secret_env` names.
+Secrets come from environment variables only: the Rucio client secret, and
+one ARGO client secret per project in the variable its `client_secret_env`
+names.
 """
 
 from __future__ import annotations
@@ -27,9 +28,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="REPORTER_", frozen=True)
 
     rucio_host: str
-    rucio_account: str
-    rucio_username: str
-    rucio_password: SecretStr
+    rucio_token_url: str  # OIDC client credentials (Design-001, step 6)
+    rucio_client_id: str
+    rucio_client_secret: SecretStr
+    rucio_scope: str | None = None
 
     argo_endpoint: str = "https://api.devel.acc.argo.grnet.gr"
     argo_metric_definition_id: str

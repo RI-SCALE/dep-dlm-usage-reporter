@@ -2,7 +2,8 @@
 
 Talks to rucio-server directly with httpx. Response shapes as served by
 rucio-server 41.2.1: NDJSON streams, RFC 1123 timestamps
-("Sun, 22 Nov 2026 09:00:00 UTC"), the session token in X-Rucio-Auth-Token.
+("Sun, 22 Nov 2026 09:00:00 UTC"). Authentication: an OIDC client-credentials
+token in X-Rucio-Auth-Token (Design-001, step 6).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from urllib.parse import quote
 
 import httpx
 
+from usage_reporter.adapters.token import ClientCredentials, TokenAuth
 from usage_reporter.core.mapping import group_from_attributes
 from usage_reporter.core.model import Group, Transfer
 from usage_reporter.core.ports import GroupMapping, TransferSource
@@ -30,25 +32,28 @@ class RucioError(RuntimeError):
     """Rucio answered with an error the adapter cannot handle."""
 
 
+def rucio_token_auth(credentials: ClientCredentials) -> TokenAuth:
+    """Rucio takes the raw JWT in X-Rucio-Auth-Token, not Authorization: Bearer."""
+    return TokenAuth(credentials, header="X-Rucio-Auth-Token", scheme=None)
+
+
 class RucioClient:
-    """Authenticated GETs against rucio-server, refreshing the token once on 401."""
+    """GETs against rucio-server with an OIDC token (refreshed once on 401 by `auth`).
+
+    Rucio validates the JWT itself (issuer from idpsecrets.json, audience,
+    scope) and maps `SUB=..., ISS=...` to the reporter's account.
+    """
 
     def __init__(
         self,
         host: str,
-        account: str,
-        username: str,
-        password: str,
+        auth: httpx.Auth,
         timeout_seconds: float = 10.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._http = httpx.Client(base_url=host, timeout=timeout_seconds, transport=transport)
-        self._credentials = {
-            "X-Rucio-Account": account,
-            "X-Rucio-Username": username,
-            "X-Rucio-Password": password,
-        }
-        self._token: str | None = None
+        self._http = httpx.Client(
+            base_url=host, auth=auth, timeout=timeout_seconds, transport=transport
+        )
 
     def close(self) -> None:
         self._http.close()
@@ -57,10 +62,7 @@ class RucioClient:
         self, path: str, params: dict[str, Any] | None = None, accept: str = JSON
     ) -> httpx.Response | None:
         """GET a path; None for 404, RucioError for other failures."""
-        response = self._send(path, params, accept)
-        if response.status_code == httpx.codes.UNAUTHORIZED:
-            self._token = None
-            response = self._send(path, params, accept)
+        response = self._http.get(path, params=params, headers={"Accept": accept})
         if response.status_code == httpx.codes.NOT_FOUND:
             return None
         if response.is_error:
@@ -72,19 +74,6 @@ class RucioClient:
         if response is None:
             return []
         return [json.loads(line) for line in response.text.splitlines() if line.strip()]
-
-    def _send(self, path: str, params: dict[str, Any] | None, accept: str) -> httpx.Response:
-        headers = {"X-Rucio-Auth-Token": self._login(), "Accept": accept}
-        return self._http.get(path, params=params, headers=headers)
-
-    def _login(self) -> str:
-        if self._token is None:
-            response = self._http.get("/auth/userpass", headers=self._credentials)
-            token = response.headers.get("X-Rucio-Auth-Token")
-            if response.is_error or not token:
-                raise RucioError(f"login returned {response.status_code}")
-            self._token = token
-        return self._token
 
 
 def parse_rucio_time(value: str | None) -> datetime | None:

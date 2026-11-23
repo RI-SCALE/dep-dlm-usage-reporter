@@ -14,6 +14,82 @@
       "serviceAccountsEnabled": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false
+    },
+    {
+      "clientId": "usage-reporter-rucio",
+      "name": "Usage reporter -> Rucio (step 6)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "rucio-reporter-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "defaultClientScopes": [
+        "aud:rucio",
+        "pep:rucio"
+      ]
+    },
+    {
+      "clientId": "rucio",
+      "name": "Rucio server's own client (idpsecrets.json)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "rucio-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": true,
+      "redirectUris": [
+        "http://rucio-server/auth/oidc_token",
+        "http://localhost:8090/auth/oidc_token"
+      ],
+      "defaultClientScopes": [
+        "aud:rucio",
+        "pep:rucio"
+      ]
     }
-  ]
+  ],
+  "users": [
+    {
+      "username": "service-account-usage-reporter-rucio",
+      "id": "4b7d6f0e-2a51-4c8e-9a3f-1e5d7c9b2a60",
+      "enabled": true,
+      "serviceAccountClientId": "usage-reporter-rucio"
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "aud:rucio",
+      "description": "Adds rucio to aud (Rucio's expected_audience); as in dep-dlm-testbed.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "display.on.consent.screen": "false",
+        "include.in.token.scope": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "aud-rucio",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "rucio",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "name": "pep:rucio",
+      "description": "Scope Rucio requires (expected_scope); as in dep-dlm-testbed.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      }
+    }
+  ],
+  "sslRequired": "none"
 }

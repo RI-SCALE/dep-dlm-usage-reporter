@@ -27,6 +27,8 @@ services:
     depends_on:
       ruciodb:
         condition: service_healthy
+      keycloak:
+        condition: service_healthy  # Rucio reads the issuer's discovery at start
     entrypoint:
       - bash
       - -c
@@ -35,6 +37,7 @@ services:
         exec /docker-entrypoint.sh httpd -DFOREGROUND
     volumes:
       - ./rucio.cfg:/opt/rucio/etc/rucio.cfg:ro
+      - ./idpsecrets.json:/opt/rucio/etc/idpsecrets.json:ro
       - ./rucio-seed.py:/seed/rucio-seed.py:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost/ping"]
@@ -50,6 +53,13 @@ services:
     environment:
       - KEYCLOAK_ADMIN=admin
       - KEYCLOAK_ADMIN_PASSWORD=admin
+      # Fixed issuer http://keycloak:8080/realms/dep, whether a token is fetched
+      # from the host (localhost or a testcontainers port) or by Rucio inside
+      # the network; Rucio compares it with idpsecrets.json (as in the testbed).
+      - KC_HOSTNAME=keycloak
+      - KC_HOSTNAME_PORT=8080
+      - KC_HOSTNAME_STRICT=false
+      - KC_HOSTNAME_STRICT_HTTPS=false
     ports:
       - "8080:8080"
     volumes:
