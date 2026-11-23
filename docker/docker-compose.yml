@@ -1,6 +1,6 @@
 # Local stack for the reporter (Design-001): Rucio's REST API and database
-# with seeded mock transfer history (step 3), and Keycloak issuing
-# client-credentials tokens (step 4). Deliberately not the full DEP
+# with seeded mock transfer history (step 3), Keycloak issuing
+# client-credentials tokens and a WireMock stand-in for ARGO (step 4). Deliberately not the full DEP
 # testbed: no FTS, storage, daemons or OPA, since the reporter only reads.
 # End-to-end runs with real transfers belong in dep-dlm-testbed.
 
@@ -18,6 +18,7 @@ services:
       retries: 10
 
   rucio-server:
+    # Same release as dep-dlm-testbed.
     image: rucio/rucio-server:release-41.2.1
     environment:
       - SEED_DAY=${SEED_DAY:-}
@@ -66,4 +67,27 @@ services:
       interval: 10s
       timeout: 5s
       start_period: 30s
+      retries: 20
+
+  argo-stub:
+    # Stand-in for ARGO Accounting (no public image): metric listing and POST
+    # from the devel OpenAPI spec. Tests add mappings via /__admin.
+    image: wiremock/wiremock:3.9.1
+    command: ["--disable-banner", "--global-response-templating"]
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./argo-stubs/mappings:/home/wiremock/mappings:ro
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/localhost/8080 &&
+          printf 'GET /__admin/mappings HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q 'mappings' <&3
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
       retries: 20

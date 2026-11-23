@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from typing import Protocol
 
-from usage_reporter.core.model import Group, Transfer, UpsertOutcome, UsageRecord
+from usage_reporter.core.model import Group, ReportOutcome, Transfer, UsageRecord
 
 
 class TransferSource(Protocol):
@@ -22,6 +22,6 @@ class GroupMapping(Protocol):
 
 
 class AccountingSink(Protocol):
-    def upsert(self, record: UsageRecord) -> UpsertOutcome:
+    def report(self, record: UsageRecord) -> ReportOutcome:
         """Create the record unless its day, project and group already exist."""
         ...

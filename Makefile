@@ -28,19 +28,20 @@ typecheck: ## mypy (strict)
 test-unit: ## Unit tests only (no Docker)
 	$(UV) run pytest tests/unit
 
-test: ## Unit and integration tests (integration starts Docker via testcontainers)
+test: ## Unit and integration tests (integration ones skip unless the stack is up)
 	$(UV) run pytest tests/unit tests/integration
 
-test-integration: ## Integration tests; set REPORTER_TEST_RUCIO_URL to reuse a running stack
-	$(UV) run pytest tests/integration -m integration
+test-integration: ## Integration tests; set REPORTER_TEST_RUCIO_URL and _KEYCLOAK_URL to reuse a running stack
+	REPORTER_TEST_RUCIO_URL=$${REPORTER_TEST_RUCIO_URL:-http://localhost:8090} \
+	  $(UV) run pytest tests/integration -m integration
 
 coverage: ## Tests with coverage report
 	$(UV) run pytest tests/unit tests/integration --cov --cov-report=term-missing --cov-report=xml
 
-run: ## Run one cycle locally (dry-run unless REPORTER_DRY_RUN=false)
-	$(UV) run usage-reporter
+run: ## One run against `make up` (docker/local.env); REPORTER_DRY_RUN=false make run posts to the stub
+	$(UV) run --env-file docker/local.env usage-reporter; echo "exit code $$?"
 
-up: ## Start the local stack (Rucio + seeded history) and wait until healthy
+up: ## Start the local stack (Rucio + seeded history, Keycloak) and wait until healthy
 	$(COMPOSE) up -d --wait
 
 down: ## Stop the local stack and wipe volumes

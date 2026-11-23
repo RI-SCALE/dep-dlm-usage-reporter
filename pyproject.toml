@@ -92,7 +92,6 @@ source_modules = ["tests.unit"]
 forbidden_modules = [
     "testcontainers",
     "usage_reporter.main",
-    "usage_reporter.settings",
 ]
 
 [[tool.importlinter.contracts]]

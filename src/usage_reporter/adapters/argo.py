@@ -23,15 +23,20 @@ from typing import Any
 
 import httpx
 
-from usage_reporter.core.model import UpsertOutcome, UsageRecord
+from usage_reporter.core.model import ReportOutcome, UsageRecord
 from usage_reporter.core.ports import AccountingSink
+from usage_reporter.core.report import RecordError
 
 PAGE_SIZE = 100  # ARGO's maximum
 MAY_HAVE_LANDED = (httpx.ReadTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError)
 
 
-class ArgoError(RuntimeError):
-    """ARGO rejected a call, or the record cannot be sent."""
+class ArgoError(RecordError):
+    """ARGO rejected this record (4xx), or it cannot be sent; others continue."""
+
+
+class ArgoUnavailableError(RuntimeError):
+    """ARGO answered 5xx, 401 or 403: unusable for every record, so the run aborts."""
 
 
 class AmbiguousMetricError(ArgoError):
@@ -73,18 +78,18 @@ class ArgoSink(AccountingSink):
     def close(self) -> None:
         self._http.close()
 
-    def upsert(self, record: UsageRecord) -> UpsertOutcome:
+    def report(self, record: UsageRecord) -> ReportOutcome:
         project = self._projects.get(record.project_id)
         if project is None:
             raise ArgoError(f"project {record.project_id} is not configured")
         if self._find(project, record) is not None:
-            return UpsertOutcome.EXISTS
+            return ReportOutcome.EXISTS
         try:
             self._post(project, record)
         except MAY_HAVE_LANDED:
             if self._find(project, record) is None:
                 self._post(project, record)
-        return UpsertOutcome.CREATED
+        return ReportOutcome.CREATED
 
     def _find(self, project: ArgoProject, record: UsageRecord) -> str | None:
         """ID of the stored metric for this record, None if there is none."""
@@ -163,7 +168,10 @@ class ArgoSink(AccountingSink):
         params: Mapping[str, str | int] | None = None,
     ) -> dict[str, Any]:
         response = self._http.request(method, path, json=json, params=params, auth=project.auth)
+        status = response.status_code
+        if status >= 500 or status in (httpx.codes.UNAUTHORIZED, httpx.codes.FORBIDDEN):
+            raise ArgoUnavailableError(f"{method} {path} returned {status}")
         if response.is_error:
-            raise ArgoError(f"{method} {path} returned {response.status_code}")
+            raise ArgoError(f"{method} {path} returned {status}")
         payload = response.json() if response.content else {}
         return payload if isinstance(payload, dict) else {}

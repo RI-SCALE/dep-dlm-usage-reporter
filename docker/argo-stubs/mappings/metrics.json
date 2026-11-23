@@ -1,0 +1,40 @@
+{
+  "mappings": [
+    {
+      "name": "List an installation's metrics: none reported yet",
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/accounting-system/installations/[^/]+/metrics",
+        "headers": { "Authorization": { "matches": "Bearer .+" } }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "size_of_page": 0, "number_of_page": 1, "total_elements": 0,
+          "total_pages": 1, "content": [], "links": []
+        }
+      }
+    },
+    {
+      "name": "Create a metric",
+      "request": {
+        "method": "POST",
+        "urlPathPattern": "/accounting-system/installations/[^/]+/metrics",
+        "headers": { "Authorization": { "matches": "Bearer .+" } },
+        "bodyPatterns": [
+          { "matchesJsonPath": "$.metric_definition_id" },
+          { "matchesJsonPath": "$.time_period_start" },
+          { "matchesJsonPath": "$.time_period_end" },
+          { "matchesJsonPath": "$.value" }
+        ]
+      },
+      "response": {
+        "status": 201,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "metric_id": "{{randomValue type='UUID'}}" },
+        "transformers": ["response-template"]
+      }
+    }
+  ]
+}

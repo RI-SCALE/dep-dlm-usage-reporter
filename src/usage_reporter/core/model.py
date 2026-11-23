@@ -45,7 +45,7 @@ class AggregateResult:
     skipped: int = 0  # rows without bytes or timestamp
 
 
-class UpsertOutcome(StrEnum):
+class ReportOutcome(StrEnum):
     CREATED = "created"
     EXISTS = "exists"  # already reported; left as is, never patched
     DRY_RUN = "dry_run"
