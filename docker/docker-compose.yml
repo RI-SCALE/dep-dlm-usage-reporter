@@ -1,5 +1,6 @@
-# Local stack for the reporter (Design-001, step 3): Rucio's REST API and
-# database with seeded mock transfer history. Deliberately not the full DEP
+# Local stack for the reporter (Design-001): Rucio's REST API and database
+# with seeded mock transfer history (step 3), and Keycloak issuing
+# client-credentials tokens (step 4). Deliberately not the full DEP
 # testbed: no FTS, storage, daemons or OPA, since the reporter only reads.
 # End-to-end runs with real transfers belong in dep-dlm-testbed.
 
@@ -36,6 +37,32 @@ services:
       - ./rucio-seed.py:/seed/rucio-seed.py:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost/ping"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 20
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0.1  # same as dep-dlm-testbed
+    hostname: keycloak
+    command: ["start-dev", "--health-enabled=true", "--import-realm"]
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./realm.json:/opt/keycloak/data/import/realm.json:ro
+    healthcheck:
+      # The image has no curl; on 23.x /health/ready is served on 8080.
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/localhost/8080 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"UP"' <&3
       interval: 10s
       timeout: 5s
       start_period: 30s

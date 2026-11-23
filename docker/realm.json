@@ -1,0 +1,19 @@
+{
+  "realm": "dep",
+  "enabled": true,
+  "accessTokenLifespan": 3600,
+  "clients": [
+    {
+      "clientId": "usage-reporter-enes",
+      "name": "Usage reporter, RI-SCALE_ENES (stand-in for GRNET's ENES client)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "enes-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false
+    }
+  ]
+}

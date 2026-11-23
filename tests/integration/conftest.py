@@ -1,5 +1,7 @@
-"""Rucio stack for integration tests: docker/docker-compose.yml through
-testcontainers, or an already running server via REPORTER_TEST_RUCIO_URL."""
+"""Local stack for integration tests: docker/docker-compose.yml through
+testcontainers, or an already running stack (`make up` with
+SEED_DAY=2026-11-22) when REPORTER_TEST_RUCIO_URL and
+REPORTER_TEST_KEYCLOAK_URL are both set."""
 
 from __future__ import annotations
 
@@ -16,12 +18,27 @@ SEED_DAY = date(2026, 11, 22)  # fixed, so tests never race midnight
 
 
 @pytest.fixture(scope="session")
-def rucio_url() -> Iterator[str]:
-    if url := os.environ.get("REPORTER_TEST_RUCIO_URL"):
-        yield url  # stack already up (make up with SEED_DAY=2026-11-22)
+def stack() -> Iterator[dict[str, str]]:
+    rucio = os.environ.get("REPORTER_TEST_RUCIO_URL")
+    keycloak = os.environ.get("REPORTER_TEST_KEYCLOAK_URL")
+    if rucio and keycloak:
+        yield {"rucio": rucio, "keycloak": keycloak}
         return
     os.environ["SEED_DAY"] = SEED_DAY.isoformat()  # read by the compose file
-    with DockerCompose(DOCKER_DIR, compose_file_name="docker-compose.yml", wait=True) as stack:
-        host = stack.get_service_host("rucio-server", 80)
-        port = stack.get_service_port("rucio-server", 80)
-        yield f"http://{host}:{port}"
+    with DockerCompose(DOCKER_DIR, compose_file_name="docker-compose.yml", wait=True) as compose:
+
+        def url(service: str, port: int) -> str:
+            host = compose.get_service_host(service, port)
+            return f"http://{host}:{compose.get_service_port(service, port)}"
+
+        yield {"rucio": url("rucio-server", 80), "keycloak": url("keycloak", 8080)}
+
+
+@pytest.fixture(scope="session")
+def rucio_url(stack: dict[str, str]) -> str:
+    return stack["rucio"]
+
+
+@pytest.fixture(scope="session")
+def keycloak_url(stack: dict[str, str]) -> str:
+    return stack["keycloak"]
