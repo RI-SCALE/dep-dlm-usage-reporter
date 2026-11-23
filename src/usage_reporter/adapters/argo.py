@@ -1,6 +1,8 @@
 """ARGO Accounting sink: one metric per UTC day, project and use case.
 
-Upsert is look up, then PATCH or POST. The lookup lists the installation's
+Each day is reported once (agreed with GRNET, 23/11): look the metric up,
+POST it if missing, and leave an existing one as is, never PATCH, so credit
+balances don't change after the fact. The lookup lists the installation's
 metrics for the metric definition and day (paged, 100 per page) and matches
 `group_id` here, since that listing does not filter by group. POST is not
 idempotent and ARGO has no client-chosen metric ID, so a POST that may have
@@ -54,7 +56,7 @@ def _same_instant(a: str, b: str) -> bool:
 
 
 class ArgoSink(AccountingSink):
-    """AccountingSink over ARGO's installation metrics: list, POST and PATCH."""
+    """AccountingSink over ARGO's installation metrics: list and POST."""
 
     def __init__(
         self,
@@ -75,11 +77,8 @@ class ArgoSink(AccountingSink):
         project = self._projects.get(record.project_id)
         if project is None:
             raise ArgoError(f"project {record.project_id} is not configured")
-        existing = self._find(project, record)
-        if existing is not None:
-            path = f"{self._metrics(project)}/{existing}"
-            self._call("PATCH", path, project, json={"value": record.bytes})
-            return UpsertOutcome.UPDATED
+        if self._find(project, record) is not None:
+            return UpsertOutcome.EXISTS
         try:
             self._post(project, record)
         except MAY_HAVE_LANDED:

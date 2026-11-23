@@ -2,7 +2,8 @@
 
 Shapes follow ARGO devel's OpenAPI (3.1.0): the installation's metrics are
 listed with `metric-definition-id`, `start`, `end`, `page` and `size`, and
-returned as `content[]` with `total_pages`; POST returns `metric_id`.
+returned as `content[]` with `total_pages`; POST returns `metric_id`. Each
+day is reported once: an existing metric is left as is, never patched.
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ def _stored(metric_id: str, group_id: str = "suc1", **overrides: Any) -> dict[st
 
 
 class FakeArgo:
-    """List (paged), POST and PATCH; records each request with its params and body.
+    """List (paged) and POST; records each request with its params and body.
 
     Like ARGO, the list is filtered by definition and dates but not by group,
     and returns every stored metric here, so the adapter must check results.
@@ -50,7 +51,7 @@ class FakeArgo:
         self.calls: list[tuple[str, str, Any]] = []
         self.params: list[dict[str, str]] = []
         self.fail_post_with: Exception | None = None
-        self.status: dict[str, int] = {}  # method (get, post, patch) -> status
+        self.status: dict[str, int] = {}  # method (get, post) -> status
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body: Any = json.loads(request.content) if request.content else {}
@@ -83,9 +84,7 @@ class FakeArgo:
                 raise error
             self.stored.append(_stored("m-new", value=body["value"]))
             return httpx.Response(201, json={"metric_id": "m-new", **body})
-        if method == "PATCH" and path.startswith(f"{METRICS}/"):
-            return httpx.Response(200, json={"metric_id": path.rsplit("/", 1)[1], **body})
-        return httpx.Response(404)
+        return httpx.Response(405)  # anything else, PATCH included, is a bug
 
     def methods(self) -> list[str]:
         return [f"{m} {p.removeprefix(METRICS) or '/'}" for m, p, _ in self.calls]
@@ -135,22 +134,22 @@ class TestUpsert:
     def test_reads_every_page_before_deciding(self) -> None:
         others = [_stored(f"o-{i}", group_id="suc2") for i in range(3)]
         fake = FakeArgo([*others, _stored("m-1")], page_size=2)
-        assert _sink(fake).upsert(RECORD) is UpsertOutcome.UPDATED
+        assert _sink(fake).upsert(RECORD) is UpsertOutcome.EXISTS
         assert [p["page"] for p in fake.params] == ["1", "2"]
-        assert fake.methods()[-1] == "PATCH /m-1"
 
-    def test_patches_the_value_of_an_existing_metric(self) -> None:
-        fake = FakeArgo([_stored("m-1")])
-        assert _sink(fake).upsert(RECORD) is UpsertOutcome.UPDATED
-        assert fake.methods() == ["GET /", "PATCH /m-1"]
-        assert fake.calls[1][2] == {"value": 151}
+    def test_leaves_an_existing_metric_as_is(self) -> None:
+        # Reported once: patching would change credit balances after the fact.
+        fake = FakeArgo([_stored("m-1", value=100.0)])
+        assert _sink(fake).upsert(RECORD) is UpsertOutcome.EXISTS
+        assert fake.methods() == ["GET /"]
+        assert fake.stored[0]["value"] == 100.0
 
     def test_accepts_metric_id_as_the_key_in_results(self) -> None:
-        stored = _stored("ignored")
+        stored = _stored("m-1")
         stored["metric_id"] = stored.pop("id")
-        fake = FakeArgo([stored])
-        _sink(fake).upsert(RECORD)
-        assert fake.methods()[-1] == "PATCH /ignored"
+        fake = FakeArgo([stored, _stored("m-2") | {"id": None, "metric_id": "m-2"}])
+        with pytest.raises(AmbiguousMetricError, match="m-1, m-2"):
+            _sink(fake).upsert(RECORD)
 
     def test_reads_the_definition_from_a_nested_object(self) -> None:
         stored = _stored("m-1")
@@ -159,8 +158,7 @@ class TestUpsert:
         other = _stored("m-2") | {"metric_definition": {"id": "elsewhere"}}
         del other["metric_definition_id"]
         fake = FakeArgo([stored, other])
-        assert _sink(fake).upsert(RECORD) is UpsertOutcome.UPDATED
-        assert fake.methods()[-1] == "PATCH /m-1"
+        assert _sink(fake).upsert(RECORD) is UpsertOutcome.EXISTS
 
     def test_keeps_only_results_for_this_record(self) -> None:
         fake = FakeArgo(
@@ -169,11 +167,13 @@ class TestUpsert:
                 _stored("other-day", time_period_start="2026-11-21T00:00:00Z"),
                 _stored("other-installation", installation_id="elsewhere"),
                 _stored("other-definition", metric_definition_id="elsewhere"),
-                _stored("m-1", time_period_start="2026-11-22T00:00:00.000Z"),
             ]
         )
-        assert _sink(fake).upsert(RECORD) is UpsertOutcome.UPDATED
-        assert fake.methods()[-1] == "PATCH /m-1"
+        assert _sink(fake).upsert(RECORD) is UpsertOutcome.CREATED
+
+    def test_matches_the_day_whatever_its_timestamp_precision(self) -> None:
+        fake = FakeArgo([_stored("m-1", time_period_start="2026-11-22T00:00:00.000Z")])
+        assert _sink(fake).upsert(RECORD) is UpsertOutcome.EXISTS
 
     def test_several_matches_write_nothing(self) -> None:
         fake = FakeArgo([_stored("m-1"), _stored("m-2")])
@@ -219,11 +219,9 @@ class TestPostTimeout:
 
 
 class TestErrors:
-    @pytest.mark.parametrize(
-        ("operation", "stored"), [("get", []), ("post", []), ("patch", ["m-1"])]
-    )
-    def test_error_responses_raise_with_status(self, operation: str, stored: list[str]) -> None:
-        fake = FakeArgo([_stored(m) for m in stored])
+    @pytest.mark.parametrize("operation", ["get", "post"])
+    def test_error_responses_raise_with_status(self, operation: str) -> None:
+        fake = FakeArgo()
         fake.status[operation] = 400
         with pytest.raises(ArgoError, match="400"):
             _sink(fake).upsert(RECORD)

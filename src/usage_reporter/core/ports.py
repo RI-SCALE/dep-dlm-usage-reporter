@@ -23,5 +23,5 @@ class GroupMapping(Protocol):
 
 class AccountingSink(Protocol):
     def upsert(self, record: UsageRecord) -> UpsertOutcome:
-        """Create or replace the record for its day, project and group."""
+        """Create the record unless its day, project and group already exist."""
         ...

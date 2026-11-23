@@ -47,5 +47,5 @@ class AggregateResult:
 
 class UpsertOutcome(StrEnum):
     CREATED = "created"
-    UPDATED = "updated"
+    EXISTS = "exists"  # already reported; left as is, never patched
     DRY_RUN = "dry_run"
