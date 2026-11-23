@@ -50,7 +50,7 @@ jobs:
           tags: usage-reporter:scan
           cache-from: type=gha
       - name: Scan image (fail on high and critical)
-        uses: aquasecurity/trivy-action@0.28.0   # pin to the current release
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: usage-reporter:scan
           severity: HIGH,CRITICAL
