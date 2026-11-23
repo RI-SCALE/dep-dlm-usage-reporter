@@ -74,11 +74,17 @@ jobs:
           cache-from: type=gha
 
       - uses: azure/setup-helm@v4
-      - name: Package and push chart to GHCR (OCI)
+        with:
+          version: v3.19.0   # Helm 4 has failed against GHCR on push
+      - name: Package and push chart to GHCR (OCI), with retries
         run: |
           helm package charts/dep-dlm-usage-reporter -d dist-chart
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
-          helm push dist-chart/*.tgz "oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts"
+          for wait in 15 30 0; do
+            helm push dist-chart/*.tgz "oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts" && exit 0
+            [ "$wait" -gt 0 ] && { echo "push failed, retrying in ${wait}s"; sleep "$wait"; }
+          done
+          exit 1
 
       - name: GitHub Release with wheel, sdist and chart
         run: |
