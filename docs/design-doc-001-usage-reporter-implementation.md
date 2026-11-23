@@ -86,15 +86,19 @@ src/usage_reporter/
   settings.py       # pydantic-settings, secrets from env vars only
   main.py           # composition root and CLI entry point
 tests/unit/  tests/integration/
-docker/  docker-compose.yml  rucio.cfg  rucio-seed.py  realm.json  argo-stubs/  local.env
-Dockerfile  Makefile  pyproject.toml  uv.lock
+docker/  docker-compose.yml  rucio.cfg  idpsecrets.json  rucio-seed.py  realm.json  argo-stubs/  local.env
+Dockerfile  .dockerignore  Makefile  pyproject.toml  uv.lock
+.github/workflows/  ci.yml  release.yml
 ```
 
-Both APIs are called with `httpx` directly: Rucio needs three endpoints (auth,
-history, account attributes) and ARGO three (token, list an installation's
-metrics, POST). The Rucio client and `argo-acc-library` would add weight. The
-ARGO contract is the devel OpenAPI spec (3.1.0, see argo-integration.md); the
-published 1.0.0 spec is older and lacks `group_id`.
+Both APIs are called with `httpx` directly, each with an OIDC
+client-credentials token from its IdP: Rucio needs two endpoints (request
+history, account attributes), ARGO two (list an installation's metrics,
+POST). The Rucio client and `argo-acc-library` would add weight. The ARGO
+contract is the devel OpenAPI spec (3.1.0):
+[open-api](https://api.devel.acc.argo.grnet.gr/open-api), browsable in
+[Swagger UI](https://api.devel.acc.argo.grnet.gr/swagger-ui/). The published
+1.0.0 spec on GitHub is older and lacks `group_id`; don't use it.
 
 import-linter enforces `core` → nothing, `adapters` → `core`, `main` → all.
 
@@ -137,8 +141,10 @@ per accounting project, so each project carries its installation and its own
 client:
 
 ```
-REPORTER_RUCIO_HOST, REPORTER_RUCIO_ACCOUNT
-REPORTER_RUCIO_USERNAME, REPORTER_RUCIO_PASSWORD   # userpass until step 6
+REPORTER_RUCIO_HOST
+REPORTER_RUCIO_TOKEN_URL, REPORTER_RUCIO_CLIENT_ID # OIDC client credentials
+REPORTER_RUCIO_CLIENT_SECRET=...                   # from the Kubernetes Secret
+REPORTER_RUCIO_SCOPE                               # optional
 REPORTER_ARGO_ENDPOINT=https://api.devel.acc.argo.grnet.gr
 REPORTER_ARGO_METRIC_DEFINITION_ID=6afc3e7801adaea4c9c12777
 REPORTER_ARGO_TOKEN_URL
@@ -158,8 +164,8 @@ start with `RI-SCALE_ENES` alone.
 
 | Service | Purpose |
 | --- | --- |
-| `ruciodb`, `rucio-server` | Real Rucio API (release 41.2.1, as in dep-dlm-testbed). Before the server starts, `rucio-seed.py` bootstraps the database, accounts and attributes, and seeds mock `requests_history`. *Step 3.* |
-| `keycloak` | Client-credentials tokens (`realm.json`); 23.0.1, as in dep-dlm-testbed. ARGO stand-in in step 4, Rucio in step 6. |
+| `ruciodb`, `rucio-server` | Real Rucio API (release 41.2.1, as in dep-dlm-testbed). Before the server starts, `rucio-seed.py` bootstraps the database, accounts and attributes, maps the reporter's token (`SUB`/`ISS`) to the `reporter` account, and seeds mock `requests_history`. Rucio validates tokens via `[oidc]` in `rucio.cfg` and `idpsecrets.json`. *Steps 3 and 6.* |
+| `keycloak` | Client-credentials tokens (`realm.json`); 23.0.1 with a fixed issuer (`KC_HOSTNAME=keycloak`), as in dep-dlm-testbed. Clients for ARGO (stand-in) and for Rucio, with `aud:rucio` and `pep:rucio` from the testbed realm. |
 | `argo-stub` | WireMock with ARGO's metric listing and POST, from the devel OpenAPI spec. *Step 4.* |
 | `toxiproxy` | Latency, resets and timeouts between the reporter and both APIs. *Step 7.* |
 
@@ -167,8 +173,9 @@ Integration tests start `docker/docker-compose.yml` through testcontainers
 (`DockerCompose`), as in authz-service, with a fixed seed day; set
 `REPORTER_TEST_{RUCIO,KEYCLOAK,ARGO}_URL` to reuse a stack started with
 `make up`. `make run` runs the job against that stack with
-`docker/local.env` (dry-run by default). Full runs with real transfers
-belong in dep-dlm-testbed.
+`docker/local.env` (dry-run by default), `make run-image` the same with the
+container image. Full runs with real transfers, and real IdPs (EGI Dev,
+LS AAI), belong in dep-dlm-testbed.
 
 ## Touch points
 
@@ -176,10 +183,11 @@ belong in dep-dlm-testbed.
 | --- | --- |
 | `src/usage_reporter/` | New package as above |
 | `tests/` | Unit and integration suites |
-| `docker/` | Compose stack, realm, ARGO stubs, Rucio seed |
-| `Dockerfile` | Slim, non-root image running `usage-reporter` |
-| `Makefile`, `pyproject.toml`, `uv.lock` | uv sync, lint, typecheck, test, up/down, image |
-| `.github/workflows/ci.yml` | Lint, typecheck, dependency audit, unit and integration tests, image build |
+| `docker/` | Compose stack, realm, Rucio OIDC config, ARGO stubs, Rucio seed |
+| `Dockerfile`, `.dockerignore` | Slim, non-root image running `usage-reporter` |
+| `Makefile`, `pyproject.toml`, `uv.lock` | uv sync, lint, typecheck, audit, test, up/down, run, image |
+| `.github/workflows/ci.yml` | Lint, typecheck, dependency audit, unit and integration tests, image build; reusable via `workflow_call` |
+| `.github/workflows/release.yml` | On `v*` tags: CI, image scan, multi-arch image to GHCR, GitHub Release with wheel and sdist |
 
 ## Fallback / safety behavior
 
@@ -233,7 +241,7 @@ Technical Workshop).
    dep-dlm-testbed and dep-dlm-deployment): the step 4 token adapter
    authenticates the reporter's client; the local Rucio trusts the compose
    Keycloak, and the client is mapped to the `reporter` account by
-   `SUB`/`ISS`. Userpass is removed.
+   `SUB`/`ISS`. Userpass is removed. *Done.*
 7. Resilience and toxiproxy tests; dry-run against the real DEP Rucio
    (read-only), checking totals against a manual query, and measure how late
    Rucio archives transfers after midnight.
@@ -257,8 +265,10 @@ convention, and the time-filter question to Rucio developers.
 - **Installations:** does `CERN-Rucio` (`6afaff4e947efcc6dea636e2`) serve all
   four projects, or will each project get its own? `REPORTER_PROJECTS` handles
   either.
-- **Rucio token claims:** which audience and scope the reporter's token needs
-  for DEP Rucio, and whether OPA grants it read access to request history
-  (admin today).
+- **Rucio token claims on DEP Rucio:** locally `rucio` in `aud` and
+  `pep:rucio` in `scope` suffice. Open for the DEP instances: their expected
+  audience and scope, whether EGI needs `resource=` instead of `audience=`,
+  and whether OPA grants the reporter read access to request history (admin
+  today).
 - **Multi-hop transfers:** exclude intermediate hops, and how to recognise them
   in history?
