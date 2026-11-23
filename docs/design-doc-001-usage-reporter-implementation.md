@@ -210,13 +210,20 @@ Technical Workshop).
    contracts. *Done.*
 2. Core, test-first: `window`, `aggregate`, mapping rules. *Done.*
 3. Compose stack with seeded (mock) Rucio history, and the Rucio adapter. *Done.*
-4. Token and ARGO adapters against the stub; `main` wiring and dry-run.
+4. Token adapter (generic client credentials, cached until expiry, refreshed
+   on 401) and ARGO adapter against the stub; `main` wiring and dry-run.
+   Rucio stays on userpass for now.
 5. **10 December:** full run on mock data for `RI-SCALE_ENES` against ARGO
    devel, with GRNET's ENES credentials.
-6. Resilience and toxiproxy tests; dry-run against the real DEP Rucio
+6. Rucio on OIDC tokens, in line with DEP DLM's token-only objective (as in
+   dep-dlm-testbed and dep-dlm-deployment): the step 4 token adapter
+   authenticates the reporter's client; the local Rucio trusts the compose
+   Keycloak, and the client is mapped to the `reporter` account by
+   `SUB`/`ISS`. Userpass is removed.
+7. Resilience and toxiproxy tests; dry-run against the real DEP Rucio
    (read-only), checking totals against a manual query.
-7. Testbed CronJob (dep-dlm-testbed) against ARGO devel; rehearse a backfill.
-8. Production CronJob (dep-dlm-deployment): a few days in dry-run, then live,
+8. Testbed CronJob (dep-dlm-testbed) against ARGO devel; rehearse a backfill.
+9. Production CronJob (dep-dlm-deployment): a few days in dry-run, then live,
    then backfill from the agreed start date.
 
 In parallel, outside this repository: ENES client credentials (GRNET), the
