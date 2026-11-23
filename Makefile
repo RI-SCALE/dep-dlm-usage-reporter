@@ -25,6 +25,11 @@ format: ## Auto-fix ruff findings and formatting
 typecheck: ## mypy (strict)
 	$(UV) run mypy
 
+audit: ## Known vulnerabilities in the locked runtime dependencies (pip-audit)
+	$(UV) export --frozen --no-dev --no-emit-project --format requirements-txt > .audit-requirements.txt
+	$(UV) run pip-audit --strict --disable-pip --require-hashes -r .audit-requirements.txt
+	@rm -f .audit-requirements.txt
+
 test-unit: ## Unit tests only (no Docker)
 	$(UV) run pytest tests/unit
 
