@@ -4,11 +4,11 @@ UV ?= uv
 COMPOSE := docker compose -f docker/docker-compose.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help sync lint format typecheck test-unit test coverage run up down
+.PHONY: help sync lint format typecheck test-unit test test-integration coverage run up down
 
 help: ## List targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
-	  | awk -F':.*?## ' '{printf "  %-12s %s\n", $$1, $$2}'
+	  | awk -F':.*?## ' '{printf "  %-18s %s\n", $$1, $$2}'
 
 sync: ## Create or refresh .venv from uv.lock
 	$(UV) sync --locked
@@ -28,8 +28,11 @@ typecheck: ## mypy (strict)
 test-unit: ## Unit tests only (no Docker)
 	$(UV) run pytest tests/unit
 
-test: ## Unit and integration tests (integration needs Docker)
+test: ## Unit and integration tests (integration starts Docker via testcontainers)
 	$(UV) run pytest tests/unit tests/integration
+
+test-integration: ## Integration tests; set REPORTER_TEST_RUCIO_URL to reuse a running stack
+	$(UV) run pytest tests/integration -m integration
 
 coverage: ## Tests with coverage report
 	$(UV) run pytest tests/unit tests/integration --cov --cov-report=term-missing --cov-report=xml
@@ -37,8 +40,8 @@ coverage: ## Tests with coverage report
 run: ## Run one cycle locally (dry-run unless REPORTER_DRY_RUN=false)
 	$(UV) run usage-reporter
 
-up: ## Start the local stack (docker/docker-compose.yml)
-	$(COMPOSE) up -d
+up: ## Start the local stack (Rucio + seeded history) and wait until healthy
+	$(COMPOSE) up -d --wait
 
 down: ## Stop the local stack and wipe volumes
 	$(COMPOSE) down -v

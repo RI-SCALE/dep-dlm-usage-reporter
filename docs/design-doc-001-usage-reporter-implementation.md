@@ -82,7 +82,7 @@ src/usage_reporter/
   settings.py       # pydantic-settings, secrets from env vars only
   main.py           # composition root and CLI entry point
 tests/unit/  tests/integration/
-docker/  docker-compose.yml  realm.json  argo-stubs/  rucio-seed.sql
+docker/  docker-compose.yml  rucio.cfg  rucio-seed.py  realm.json  argo-stubs/
 Dockerfile  Makefile  pyproject.toml  uv.lock
 ```
 
@@ -149,13 +149,14 @@ start with `RI-SCALE_ENES` alone.
 
 | Service | Purpose |
 | --- | --- |
-| `postgres`, `rucio-server`, `rucio-init` | Real Rucio API. Init bootstraps accounts and attributes, and seeds `requests_history` with SQL (`rucio-seed.sql`) |
-| `keycloak` | Client-credentials tokens (`realm.json`) |
-| `argo-stub` | WireMock with ARGO's search, POST and PATCH from the documented contract |
-| `toxiproxy` | Latency, resets and timeouts between the reporter and both APIs |
+| `ruciodb`, `rucio-server` | Real Rucio API (release 41.2.1, as in dep-dlm-testbed). Before the server starts, `rucio-seed.py` bootstraps the database, accounts and attributes, and seeds mock `requests_history`. *Step 3.* |
+| `keycloak` | Client-credentials tokens for the ARGO stub (`realm.json`). *Step 4.* |
+| `argo-stub` | WireMock with ARGO's search, POST and PATCH from the documented contract. *Step 4.* |
+| `toxiproxy` | Latency, resets and timeouts between the reporter and both APIs. *Step 6.* |
 
-Integration tests start the same images through testcontainers, as in
-authz-service; the compose file is for `make up` and manual runs.
+Integration tests run against `make up` (`make test-integration`) and are
+skipped when the stack is down. CI starts the stack in a separate job. Full
+runs with real transfers belong in dep-dlm-testbed.
 
 ## Touch points
 
@@ -208,7 +209,7 @@ Technical Workshop).
 1. Skeleton: `pyproject.toml` and `uv.lock` (uv), Makefile, CI, import-linter
    contracts. *Done.*
 2. Core, test-first: `window`, `aggregate`, mapping rules. *Done.*
-3. Compose stack with seeded (mock) Rucio history, and the Rucio adapter.
+3. Compose stack with seeded (mock) Rucio history, and the Rucio adapter. *Done.*
 4. Token and ARGO adapters against the stub; `main` wiring and dry-run.
 5. **10 December:** full run on mock data for `RI-SCALE_ENES` against ARGO
    devel, with GRNET's ENES credentials.

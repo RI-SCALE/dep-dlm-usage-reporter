@@ -1,0 +1,42 @@
+# Local stack for the reporter (Design-001, step 3): Rucio's REST API and
+# database with seeded mock transfer history. Deliberately not the full DEP
+# testbed: no FTS, storage, daemons or OPA, since the reporter only reads.
+# End-to-end runs with real transfers belong in dep-dlm-testbed.
+
+services:
+  ruciodb:
+    image: postgres:14
+    environment:
+      - POSTGRES_USER=rucio
+      - POSTGRES_PASSWORD=rucio
+      - POSTGRES_DB=rucio
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rucio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rucio-server:
+    image: rucio/rucio-server:release-41.2.1
+    environment:
+      - SEED_DAY=${SEED_DAY:-}
+    ports:
+      - "8090:80"
+    depends_on:
+      ruciodb:
+        condition: service_healthy
+    entrypoint:
+      - bash
+      - -c
+      - |
+        python3 /seed/rucio-seed.py &&
+        exec /docker-entrypoint.sh httpd -DFOREGROUND
+    volumes:
+      - ./rucio.cfg:/opt/rucio/etc/rucio.cfg:ro
+      - ./rucio-seed.py:/seed/rucio-seed.py:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost/ping"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 20

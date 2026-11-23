@@ -19,4 +19,14 @@ jobs:
       - run: make sync
       - run: make lint
       - run: make typecheck
-      - run: make test
+      - run: make test-unit
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: make sync
+      - run: make test-integration
