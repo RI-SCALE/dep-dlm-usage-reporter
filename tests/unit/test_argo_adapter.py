@@ -1,8 +1,8 @@
 """ARGO Accounting adapter against httpx.MockTransport (Design-001, step 4).
 
-Shapes follow the ARGO docs and OpenAPI 1.0.0: POST returns `metric_id`,
-search returns `content[].id`. `group_id` is documented as optional on
-metrics but missing from the spec, so it is sent only when set.
+Shapes follow ARGO devel's OpenAPI (3.1.0): the installation's metrics are
+listed with `metric-definition-id`, `start`, `end`, `page` and `size`, and
+returned as `content[]` with `total_pages`; POST returns `metric_id`.
 """
 
 from __future__ import annotations
@@ -38,25 +38,43 @@ def _stored(metric_id: str, group_id: str = "suc1", **overrides: Any) -> dict[st
 
 
 class FakeArgo:
-    """Search, POST and PATCH, recording each request and its JSON body."""
+    """List (paged), POST and PATCH; records each request with its params and body.
 
-    def __init__(self, stored: list[dict[str, Any]] | None = None) -> None:
+    Like ARGO, the list is filtered by definition and dates but not by group,
+    and returns every stored metric here, so the adapter must check results.
+    """
+
+    def __init__(self, stored: list[dict[str, Any]] | None = None, page_size: int = 100) -> None:
         self.stored = stored or []
+        self.page_size = page_size
         self.calls: list[tuple[str, str, Any]] = []
+        self.params: list[dict[str, str]] = []
         self.fail_post_with: Exception | None = None
-        self.status: dict[str, int] = {}  # operation (search, post, patch) -> status
+        self.status: dict[str, int] = {}  # method (get, post, patch) -> status
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body: Any = json.loads(request.content) if request.content else {}
         method, path = request.method, request.url.path
         self.calls.append((method, path, body))
         assert request.headers["Authorization"] == "Bearer enes-token"
-        operation = "search" if path.endswith("/search") else method.lower()
-        if status := self.status.get(operation):
+        if status := self.status.get(method.lower()):
             return httpx.Response(status, json={"code": status, "message": "nope"})
-        if operation == "search":
+        if method == "GET" and path == METRICS:
+            params = dict(request.url.params)
+            self.params.append(params)
+            page, size = int(params["page"]), int(params["size"])
+            pages = max(1, -(-len(self.stored) // self.page_size))
+            content = self.stored[(page - 1) * self.page_size : page * self.page_size]
+            assert size == 100
             return httpx.Response(
-                200, json={"total_elements": len(self.stored), "content": self.stored}
+                200,
+                json={
+                    "size_of_page": len(content),
+                    "number_of_page": page,
+                    "total_elements": len(self.stored),
+                    "total_pages": pages,
+                    "content": content,
+                },
             )
         if method == "POST" and path == METRICS:
             if self.fail_post_with:
@@ -70,10 +88,7 @@ class FakeArgo:
         return httpx.Response(404)
 
     def methods(self) -> list[str]:
-        return [
-            f"{m} {'search' if p.endswith('/search') else p.removeprefix(METRICS) or '/'}"
-            for m, p, _ in self.calls
-        ]
+        return [f"{m} {p.removeprefix(METRICS) or '/'}" for m, p, _ in self.calls]
 
 
 class StaticToken(httpx.Auth):
@@ -95,7 +110,7 @@ class TestUpsert:
     def test_posts_a_new_metric_for_the_whole_utc_day(self) -> None:
         fake = FakeArgo()
         assert _sink(fake).upsert(RECORD) is UpsertOutcome.CREATED
-        assert fake.methods() == ["POST search", "POST /"]
+        assert fake.methods() == ["GET /", "POST /"]
         assert fake.calls[1][2] == {
             "metric_definition_id": DEFINITION,
             "time_period_start": "2026-11-22T00:00:00Z",
@@ -104,49 +119,50 @@ class TestUpsert:
             "group_id": "suc1",
         }
 
-    def test_searches_by_installation_definition_day_and_group(self) -> None:
+    def test_lists_the_installation_by_definition_and_day(self) -> None:
         fake = FakeArgo()
         _sink(fake).upsert(RECORD)
-        assert fake.calls[0][2] == {
-            "type": "filter",
-            "operator": "AND",
-            "criteria": [
-                {
-                    "type": "query",
-                    "field": "installation_id",
-                    "values": INSTALLATION,
-                    "operand": "eq",
-                },
-                {
-                    "type": "query",
-                    "field": "metric_definition_id",
-                    "values": DEFINITION,
-                    "operand": "eq",
-                },
-                {
-                    "type": "query",
-                    "field": "time_period_start",
-                    "values": "2026-11-22T00:00:00Z",
-                    "operand": "eq",
-                },
-                {"type": "query", "field": "group_id", "values": "suc1", "operand": "eq"},
-            ],
-        }
+        assert fake.params == [
+            {
+                "metric-definition-id": DEFINITION,
+                "start": "2026-11-22",
+                "end": "2026-11-22",
+                "page": "1",
+                "size": "100",
+            }
+        ]
+
+    def test_reads_every_page_before_deciding(self) -> None:
+        others = [_stored(f"o-{i}", group_id="suc2") for i in range(3)]
+        fake = FakeArgo([*others, _stored("m-1")], page_size=2)
+        assert _sink(fake).upsert(RECORD) is UpsertOutcome.UPDATED
+        assert [p["page"] for p in fake.params] == ["1", "2"]
+        assert fake.methods()[-1] == "PATCH /m-1"
 
     def test_patches_the_value_of_an_existing_metric(self) -> None:
         fake = FakeArgo([_stored("m-1")])
         assert _sink(fake).upsert(RECORD) is UpsertOutcome.UPDATED
-        assert fake.methods() == ["POST search", "PATCH /m-1"]
+        assert fake.methods() == ["GET /", "PATCH /m-1"]
         assert fake.calls[1][2] == {"value": 151}
 
-    def test_accepts_metric_id_as_the_key_in_search_results(self) -> None:
+    def test_accepts_metric_id_as_the_key_in_results(self) -> None:
         stored = _stored("ignored")
         stored["metric_id"] = stored.pop("id")
         fake = FakeArgo([stored])
         _sink(fake).upsert(RECORD)
         assert fake.methods()[-1] == "PATCH /ignored"
 
-    def test_ignores_results_the_search_should_not_have_returned(self) -> None:
+    def test_reads_the_definition_from_a_nested_object(self) -> None:
+        stored = _stored("m-1")
+        del stored["metric_definition_id"]
+        stored["metric_definition"] = {"id": DEFINITION, "metric_name": "bytes"}
+        other = _stored("m-2") | {"metric_definition": {"id": "elsewhere"}}
+        del other["metric_definition_id"]
+        fake = FakeArgo([stored, other])
+        assert _sink(fake).upsert(RECORD) is UpsertOutcome.UPDATED
+        assert fake.methods()[-1] == "PATCH /m-1"
+
+    def test_keeps_only_results_for_this_record(self) -> None:
         fake = FakeArgo(
             [
                 _stored("other-group", group_id="suc2"),
@@ -163,11 +179,11 @@ class TestUpsert:
         fake = FakeArgo([_stored("m-1"), _stored("m-2")])
         with pytest.raises(AmbiguousMetricError, match="m-1, m-2"):
             _sink(fake).upsert(RECORD)
-        assert fake.methods() == ["POST search"]
+        assert fake.methods() == ["GET /"]
 
     def test_a_result_without_group_id_counts_as_a_match(self) -> None:
-        # If ARGO drops group_id from results, two use cases look alike and
-        # the record fails rather than overwriting the other one.
+        # Safety net: if a result lacks group_id, use cases look alike and the
+        # record fails rather than overwriting another one.
         no_group = _stored("m-1")
         del no_group["group_id"]
         fake = FakeArgo([no_group, _stored("m-2", group_id="suc2") | {"group_id": None}])
@@ -176,11 +192,11 @@ class TestUpsert:
 
 
 class TestPostTimeout:
-    def test_searches_again_instead_of_posting_twice(self) -> None:
+    def test_looks_up_again_instead_of_posting_twice(self) -> None:
         fake = FakeArgo()
         fake.fail_post_with = httpx.ReadTimeout("slow")
         assert _sink(fake).upsert(RECORD) is UpsertOutcome.CREATED
-        assert fake.methods() == ["POST search", "POST /", "POST search"]
+        assert fake.methods() == ["GET /", "POST /", "GET /"]
 
     def test_posts_once_more_if_the_timed_out_post_did_not_land(self) -> None:
         fake = FakeArgo()
@@ -192,7 +208,7 @@ class TestPostTimeout:
             return fake(request)
 
         assert _sink(dropping).upsert(RECORD) is UpsertOutcome.CREATED
-        assert fake.methods() == ["POST search", "POST /", "POST search", "POST /"]
+        assert fake.methods() == ["GET /", "POST /", "GET /", "POST /"]
 
     def test_a_connect_timeout_is_not_ambiguous_and_propagates(self) -> None:
         def refusing(request: httpx.Request) -> httpx.Response:
@@ -204,7 +220,7 @@ class TestPostTimeout:
 
 class TestErrors:
     @pytest.mark.parametrize(
-        ("operation", "stored"), [("search", []), ("post", []), ("patch", ["m-1"])]
+        ("operation", "stored"), [("get", []), ("post", []), ("patch", ["m-1"])]
     )
     def test_error_responses_raise_with_status(self, operation: str, stored: list[str]) -> None:
         fake = FakeArgo([_stored(m) for m in stored])

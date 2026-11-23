@@ -1,18 +1,20 @@
 """ARGO Accounting sink: one metric per UTC day, project and use case.
 
-Upsert is search, then PATCH or POST. POST is not idempotent and ARGO has no
-client-chosen metric ID, so a POST that may have landed (read or write
-timeout) is followed by a new search, never by a blind retry.
+Upsert is look up, then PATCH or POST. The lookup lists the installation's
+metrics for the metric definition and day (paged, 100 per page) and matches
+`group_id` here, since that listing does not filter by group. POST is not
+idempotent and ARGO has no client-chosen metric ID, so a POST that may have
+landed (read or write timeout) is followed by a new lookup, never by a
+blind retry.
 
-Shapes follow the ARGO docs and OpenAPI 1.0.0. `group_id` is documented as
-optional but missing from the spec; it is sent when set, and results that
-lack it are treated as matching, so an unclear match fails instead of
-overwriting another use case.
+Shapes follow ARGO devel's OpenAPI (3.1.0). Results without a `group_id`
+are treated as matching, so an unclear match fails instead of overwriting
+another use case.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -22,7 +24,7 @@ import httpx
 from usage_reporter.core.model import UpsertOutcome, UsageRecord
 from usage_reporter.core.ports import AccountingSink
 
-SEARCH = "/accounting-system/metrics/search"
+PAGE_SIZE = 100  # ARGO's maximum
 MAY_HAVE_LANDED = (httpx.ReadTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError)
 
 
@@ -52,7 +54,7 @@ def _same_instant(a: str, b: str) -> bool:
 
 
 class ArgoSink(AccountingSink):
-    """AccountingSink over ARGO's search, POST and PATCH."""
+    """AccountingSink over ARGO's installation metrics: list, POST and PATCH."""
 
     def __init__(
         self,
@@ -75,9 +77,8 @@ class ArgoSink(AccountingSink):
             raise ArgoError(f"project {record.project_id} is not configured")
         existing = self._find(project, record)
         if existing is not None:
-            self._call(
-                "PATCH", f"{self._metrics(project)}/{existing}", project, {"value": record.bytes}
-            )
+            path = f"{self._metrics(project)}/{existing}"
+            self._call("PATCH", path, project, json={"value": record.bytes})
             return UpsertOutcome.UPDATED
         try:
             self._post(project, record)
@@ -95,24 +96,41 @@ class ArgoSink(AccountingSink):
             "time_period_start": start,
             "group_id": record.group_id,
         }
-        criteria = [
-            {"type": "query", "field": k, "values": v, "operand": "eq"} for k, v in wanted.items()
+        ids = [
+            str(m.get("id") or m.get("metric_id"))
+            for m in self._list(project, record.day)
+            if self._matches(m, wanted)
         ]
-        body = {"type": "filter", "operator": "AND", "criteria": criteria}
-        content = self._call("POST", SEARCH, project, body).get("content") or []
-        # Search filters are loosely specified, so check results here as well.
-        ids = [str(m.get("id") or m.get("metric_id")) for m in content if self._matches(m, wanted)]
         if len(ids) > 1:
             raise AmbiguousMetricError(f"{record}: several stored metrics match ({', '.join(ids)})")
         return ids[0] if ids else None
 
+    def _list(self, project: ArgoProject, day: date) -> Iterator[Mapping[str, Any]]:
+        params: dict[str, str | int] = {
+            "metric-definition-id": self._definition,
+            "start": day.isoformat(),
+            "end": day.isoformat(),
+            "size": PAGE_SIZE,
+        }
+        page = 1
+        while True:
+            body = self._call(
+                "GET", self._metrics(project), project, params={**params, "page": page}
+            )
+            yield from body.get("content") or []
+            if page >= int(body.get("total_pages") or 1):
+                return
+            page += 1
+
     @staticmethod
     def _matches(metric: Mapping[str, Any], wanted: Mapping[str, str]) -> bool:
-        definitions = metric.get("metric_definition") or []
+        definition = metric.get("metric_definition")
+        if isinstance(definition, list):  # the docs' examples show a list
+            definition = definition[0] if definition else None
         found = {
             "installation_id": metric.get("installation_id"),
             "metric_definition_id": metric.get("metric_definition_id")
-            or next((d.get("id") for d in definitions if isinstance(d, dict)), None),
+            or (definition.get("id") if isinstance(definition, dict) else None),
             "group_id": metric.get("group_id"),
         }
         if any(v is not None and v != wanted[k] for k, v in found.items()):
@@ -130,14 +148,22 @@ class ArgoSink(AccountingSink):
         }
         if record.group_id:
             body["group_id"] = record.group_id
-        self._call("POST", self._metrics(project), project, body)
+        self._call("POST", self._metrics(project), project, json=body)
 
     @staticmethod
     def _metrics(project: ArgoProject) -> str:
         return f"/accounting-system/installations/{project.installation_id}/metrics"
 
-    def _call(self, method: str, path: str, project: ArgoProject, body: object) -> dict[str, Any]:
-        response = self._http.request(method, path, json=body, auth=project.auth)
+    def _call(
+        self,
+        method: str,
+        path: str,
+        project: ArgoProject,
+        *,
+        json: object = None,
+        params: Mapping[str, str | int] | None = None,
+    ) -> dict[str, Any]:
+        response = self._http.request(method, path, json=json, params=params, auth=project.auth)
         if response.is_error:
             raise ArgoError(f"{method} {path} returned {response.status_code}")
         payload = response.json() if response.content else {}
