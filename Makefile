@@ -50,3 +50,6 @@ up: ## Start the local stack (Rucio + seeded history, Keycloak) and wait until h
 
 down: ## Stop the local stack and wipe volumes
 	$(COMPOSE) down -v
+
+image: ## Build the container image (usage-reporter:dev)
+	docker build -t usage-reporter:dev .
