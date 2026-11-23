@@ -60,3 +60,13 @@ A transfer counts once, in full, on the day it finished (`transferred_at`);
 failed transfers are not counted. Behaviour and decisions:
 [Design-009](https://github.com/RI-SCALE/dep-dlm-testbed/blob/main/docs/design/design-doc-009-dep-dlm-transfer-usage-reporter-for-argo-accounting.md)
 and [ADR-010](https://github.com/RI-SCALE/dep-dlm-testbed/blob/main/docs/adrs/adr-010-report-transfer-usage-to-argo.md).
+
+## Releasing
+
+Bump the version, commit, push a `vX.Y.Z` tag; `release.yml` builds and
+scans the image, pushes it to GHCR and creates the GitHub Release.
+
+```
+uv version X.Y.Z && git commit -am "chore: release X.Y.Z"
+git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin main vX.Y.Z
+```
