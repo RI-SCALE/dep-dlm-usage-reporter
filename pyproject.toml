@@ -1,0 +1,105 @@
+[project]
+name = "usage-reporter"
+version = "0.1.0"
+description = "Daily job that reports DEP DLM data-transfer usage from Rucio to ARGO Accounting (Design-001)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "pydantic>=2.14.4",
+    "pydantic-settings>=2.16.3",
+    "tenacity>=9.2.1",
+]
+
+[project.scripts]
+usage-reporter = "usage_reporter.main:main"
+
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.17",
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.6",
+    "testcontainers>=4.15.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "S",
+          "C4", "PIE", "RET", "RSE", "PERF", "PT", "PTH", "BLE", "N", "A", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",  # assert is fine in tests
+    "S105",  # dummy tokens in tests
+    "S106",  # test-realm credentials
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+packages = ["usage_reporter"]
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: needs Docker (testcontainers)",
+    "failure_modes: injects network faults via toxiproxy",
+]
+
+[tool.coverage.run]
+source = ["usage_reporter"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+# Architecture contracts (Design-001, "Layout").
+[tool.importlinter]
+root_packages = ["usage_reporter", "tests"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Core depends on the standard library only"
+type = "forbidden"
+source_modules = ["usage_reporter.core"]
+forbidden_modules = [
+    "httpx",
+    "pydantic",
+    "pydantic_settings",
+    "tenacity",
+    "usage_reporter.adapters",
+    "usage_reporter.settings",
+    "usage_reporter.main",
+]
+
+[[tool.importlinter.contracts]]
+name = "Unit tests need no containers and no composition root"
+type = "forbidden"
+source_modules = ["tests.unit"]
+forbidden_modules = [
+    "testcontainers",
+    "usage_reporter.main",
+    "usage_reporter.settings",
+]
+
+[[tool.importlinter.contracts]]
+name = "Layers: main -> adapters -> core, never upward"
+type = "layers"
+layers = [
+    "usage_reporter.main",
+    "usage_reporter.adapters",
+    "usage_reporter.core",
+]
