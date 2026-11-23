@@ -35,6 +35,10 @@ Project (DEP) -> Provider (CERN) -> Installation (Rucio) -> Metric definition
 - **Unit:** bytes.
 - **Granularity:** daily per calendar date, 00:00:00-23:59:59 UTC.
 - **Use cases:** one `group_id` per scientific use case.
+- **Counting:** a transfer counts once, in full, on the day it finished
+  (Rucio's `transferred_at`); failed transfers are not counted. A transfer
+  archived by Rucio after the nightly run is missed; GRNET accepts this as
+  rare (23 November).
 
 | Project | Use cases |
 | --- | --- |
