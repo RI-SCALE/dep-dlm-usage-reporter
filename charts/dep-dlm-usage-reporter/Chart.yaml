@@ -3,8 +3,8 @@ name: dep-dlm-usage-reporter
 description: Nightly CronJob that reports DEP DLM data-transfer usage from Rucio to ARGO Accounting (RI-SCALE).
 type: application
 # Released together with the image: version, appVersion and the vX.Y.Z tag match.
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.2.0"
 kubeVersion: ">=1.27.0-0"   # CronJob timeZone is GA from 1.27
 home: https://github.com/RI-SCALE/dep-dlm-usage-reporter
 sources:
