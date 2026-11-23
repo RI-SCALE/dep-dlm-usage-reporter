@@ -15,6 +15,10 @@ Final metric definitions"). Design-001 says how this repository implements it.
   secret) at the OIDC provider's `/token` endpoint. Recommended for this job.
 - **Credentials are per accounting project.** GRNET delivers them out of band;
   the first set is for `RI-SCALE_ENES`.
+- **API spec:** [OpenAPI (devel)](https://api.devel.acc.argo.grnet.gr/open-api),
+  browsable in [Swagger UI](https://api.devel.acc.argo.grnet.gr/swagger-ui/)
+  (no token needed). The published spec on GitHub (1.0.0) is older and lacks
+  `group_id`.
 
 ## Structure
 
@@ -41,6 +45,15 @@ Project (DEP) -> Provider (CERN) -> Installation (Rucio) -> Metric definition
 
 `group_id` is not settled: GRNET asked to escalate fair sharing and data
 ownership (per DEP or per use case) before building on it.
+
+## Metric API (from the devel spec, 23 November)
+
+- `group_id` is supported on POST and PATCH and returned in responses.
+- Existing metrics are looked up with `GET /installations/{id}/metrics`
+  (`metric-definition-id`, `start`/`end` as dates, `page`, `size` up to 100).
+- Each day is reported once, the night after (yesterday, UTC), with no PATCH
+  in normal operation, so credit balances don't change after the fact
+  (agreed with GRNET, 23 November).
 
 ## Milestones
 

@@ -10,7 +10,8 @@
 ## Problem
 
 Design-009 defines a daily job that reads finished transfers from Rucio, maps
-accounts to DEP and use case, and upserts daily totals into ARGO Accounting.
+accounts to DEP and use case, and reports each day's totals to ARGO Accounting
+once.
 This repository is empty apart from the README. Before writing code we need to
 fix:
 
@@ -26,11 +27,11 @@ fix:
 
 ## Goals
 
-- Python 3.12, about 400–600 lines of source, with no web framework.
+- Python 3.12, about 600–800 lines of source, with no web framework.
 - A pure core (time window, aggregation, mapping rules) covered by unit tests
   written first.
 - Bounded, observable failure: timeouts, retries on transient errors, and an
-  abort that the next run's lookback recovers.
+  abort that a re-run for the missed day recovers.
 - One `make up` / `make test` stack that runs the whole job locally.
 
 ## Non-goals
@@ -75,8 +76,8 @@ src/usage_reporter/
     aggregate.py    # aggregate(transfers, mapping, days) -> AggregateResult
   adapters/
     rucio.py        # RucioRestSource, RucioAttributeMapping (httpx)
-    argo.py         # ArgoSink: search, POST, PATCH (httpx)
-    token.py        # client-credentials token per project, refreshed on 401
+    argo.py         # ArgoSink: look up, then POST once (httpx)
+    token.py        # client-credentials tokens (ARGO per project, Rucio), refreshed on 401
     resilience.py   # retry policy and per-run failure budget
     stdout.py       # StdoutSink for dry-run
   settings.py       # pydantic-settings, secrets from env vars only
@@ -87,9 +88,10 @@ Dockerfile  Makefile  pyproject.toml  uv.lock
 ```
 
 Both APIs are called with `httpx` directly: Rucio needs three endpoints (auth,
-history, account attributes) and ARGO four (token, search, POST, PATCH). The
-Rucio client and `argo-acc-library` would add weight, and the library's
-documented examples cover add and list but not search or update.
+history, account attributes) and ARGO three (token, list an installation's
+metrics, POST). The Rucio client and `argo-acc-library` would add weight. The
+ARGO contract is the devel OpenAPI spec (3.1.0, see argo-integration.md); the
+published 1.0.0 spec is older and lacks `group_id`.
 
 import-linter enforces `core` → nothing, `adapters` → `core`, `main` → all.
 
@@ -116,7 +118,7 @@ class AccountingSink(Protocol):
 | Timeouts | Connect and read timeouts on every call (config) |
 | Transient errors | Retry connection errors, 429, 502–504 with exponential backoff and jitter, honouring `Retry-After` (`tenacity`) |
 | Per-run budget | After N consecutive failures to one dependency, abort with a distinct exit code. This is the circuit breaker, scoped to the run. |
-| ARGO POST timeout | Never retry blindly: search for the record again, then PATCH or POST |
+| ARGO POST timeout | Never retry blindly: look the record up again, POST only if it is missing |
 | 401 mid-run | Fetch a new token once, retry once |
 | Other 4xx | Fail that record, continue, non-zero exit at the end |
 
@@ -138,7 +140,7 @@ REPORTER_ARGO_TOKEN_URL
 REPORTER_PROJECTS='{"RI-SCALE_ENES": {"installation_id": "6afaff4e947efcc6dea636e2",
                     "client_id": "...", "client_secret_env": "REPORTER_SECRET_ENES"}}'
 REPORTER_SECRET_ENES=...   # one secret per project, from the Kubernetes Secret
-REPORTER_LOOKBACK_DAYS=2  REPORTER_DRY_RUN=true
+REPORTER_LOOKBACK_DAYS=0  REPORTER_DRY_RUN=true   # 0: report yesterday only
 REPORTER_TIMEOUT_SECONDS=10  REPORTER_MAX_CONSECUTIVE_FAILURES=5
 ```
 
@@ -150,13 +152,15 @@ start with `RI-SCALE_ENES` alone.
 | Service | Purpose |
 | --- | --- |
 | `ruciodb`, `rucio-server` | Real Rucio API (release 41.2.1, as in dep-dlm-testbed). Before the server starts, `rucio-seed.py` bootstraps the database, accounts and attributes, and seeds mock `requests_history`. *Step 3.* |
-| `keycloak` | Client-credentials tokens for the ARGO stub (`realm.json`). *Step 4.* |
-| `argo-stub` | WireMock with ARGO's search, POST and PATCH from the documented contract. *Step 4.* |
+| `keycloak` | Client-credentials tokens (`realm.json`); 23.0.1, as in dep-dlm-testbed. ARGO stand-in in step 4, Rucio in step 6. |
+| `argo-stub` | WireMock with ARGO's metric listing and POST, from the devel OpenAPI spec. *Step 4.* |
 | `toxiproxy` | Latency, resets and timeouts between the reporter and both APIs. *Step 6.* |
 
-Integration tests run against `make up` (`make test-integration`) and are
-skipped when the stack is down. CI starts the stack in a separate job. Full
-runs with real transfers belong in dep-dlm-testbed.
+Integration tests start `docker/docker-compose.yml` through testcontainers
+(`DockerCompose`), as in authz-service, with a fixed seed day; set
+`REPORTER_TEST_RUCIO_URL` and `REPORTER_TEST_KEYCLOAK_URL` to reuse a stack
+started with `make up`. Full runs with real transfers belong in
+dep-dlm-testbed.
 
 ## Touch points
 
@@ -174,9 +178,11 @@ runs with real transfers belong in dep-dlm-testbed.
 - **Missing or invalid config:** exit `1` before any call.
 - **Dry-run default:** `REPORTER_DRY_RUN=true` writes records to stdout only.
 - **Unmapped account:** excluded, logged with its bytes, exit `2`.
+- **Day already in ARGO:** leave it, log; no PATCH in normal operation, so
+  credit balances never change after the fact.
 - **More than one ARGO match for a day and group:** don't write, log, exit `3`.
-- **Dependency down:** abort with exit `4`; the next run's lookback re-sends the
-  missed days.
+- **Dependency down:** abort with exit `4`; re-run for the missed day (the
+  lookup prevents duplicates).
 - **Timestamps:** Rucio times without a timezone are treated as UTC.
 
 ## Testing
@@ -185,15 +191,15 @@ Test-first. Each case is written before the code that passes it.
 
 - **Unit (core):**
   - Time: 23:59:59.999 versus 00:00:00 the next day, naive timestamps as UTC,
-    lookback overlap.
+    yesterday only by default.
   - Data: null `transferred_at` or `bytes`, duplicate request IDs across pages,
     empty history, large byte values.
   - Mapping: one attribute missing, `project_id` not configured, several
     accounts summing into one group, one account across several days.
 - **Unit (adapters, with `httpx.MockTransport`):** paging (final page exactly
-  at the limit), PATCH when found, POST when not, multiple matches, POST
-  timeout followed by search, 401 refresh, 429 `Retry-After`, retry exhaustion
-  and abort.
+  at the limit), skip when found, POST when not, multiple matches, POST
+  timeout followed by a new lookup, 401 refresh, 429 `Retry-After`, retry
+  exhaustion and abort.
 - **Integration:** full run against the compose stack (seeded Rucio, Keycloak,
   ARGO stub), asserting the exact requests the stub received; toxiproxy cases
   for slow and dropped connections.
@@ -212,7 +218,7 @@ Technical Workshop).
 3. Compose stack with seeded (mock) Rucio history, and the Rucio adapter. *Done.*
 4. Token adapter (generic client credentials, cached until expiry, refreshed
    on 401) and ARGO adapter against the stub; `main` wiring and dry-run.
-   Rucio stays on userpass for now.
+   Rucio stays on userpass for now. *Token and ARGO adapters done.*
 5. **10 December:** full run on mock data for `RI-SCALE_ENES` against ARGO
    devel, with GRNET's ENES credentials.
 6. Rucio on OIDC tokens, in line with DEP DLM's token-only objective (as in
@@ -221,7 +227,8 @@ Technical Workshop).
    Keycloak, and the client is mapped to the `reporter` account by
    `SUB`/`ISS`. Userpass is removed.
 7. Resilience and toxiproxy tests; dry-run against the real DEP Rucio
-   (read-only), checking totals against a manual query.
+   (read-only), checking totals against a manual query, and measure how late
+   Rucio archives transfers after midnight.
 8. Testbed CronJob (dep-dlm-testbed) against ARGO devel; rehearse a backfill.
 9. Production CronJob (dep-dlm-deployment): a few days in dry-run, then live,
    then backfill from the agreed start date.
@@ -232,9 +239,9 @@ convention, and the time-filter question to Rucio developers.
 
 ## Open questions
 
-- **ARGO search:** can it filter on installation, metric definition and
-  `group_id` with equality? If not, the adapter lists the installation's
-  metrics and filters client-side.
+- **Late-archived transfers:** if step 7 shows transfers archived after the
+  nightly run, add the previous day's difference (Rucio minus ARGO) to the
+  new day's value instead of patching.
 - **`group_id` and data ownership:** GRNET considers `group_id` not readily
   applicable until fair sharing and data ownership (per DEP or per use case)
   are clarified. If use cases drop out, records carry the project only and the
@@ -242,9 +249,8 @@ convention, and the time-filter question to Rucio developers.
 - **Installations:** does `CERN-Rucio` (`6afaff4e947efcc6dea636e2`) serve all
   four projects, or will each project get its own? `REPORTER_PROJECTS` handles
   either.
-- **Rucio authentication:** OIDC token from DEP IAM, or userpass for the
-  reporter account?
+- **Rucio token claims:** which audience and scope the reporter's token needs
+  for DEP Rucio, and whether OPA grants it read access to request history
+  (admin today).
 - **Multi-hop transfers:** exclude intermediate hops, and how to recognise them
   in history?
-- **ARGO stub fidelity:** does GRNET publish an OpenAPI spec or image we can
-  generate the stub from, instead of hand-written mappings?
