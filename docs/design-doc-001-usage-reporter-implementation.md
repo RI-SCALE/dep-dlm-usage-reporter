@@ -60,7 +60,9 @@ and dependencies: runtime dependencies in `[project]`, tools in the `dev`
 dependency group, all pinned in a committed `uv.lock`. The build backend is
 `uv_build`. The Makefile is a thin index over `uv run` (lint, typecheck, test,
 up/down), so the target names match authz-service. CI installs uv with
-`astral-sh/setup-uv` and runs `make sync` (`uv sync --locked`).
+`astral-sh/setup-uv` and runs `make sync` (`uv sync --locked`). `make audit`
+runs pip-audit on the locked runtime dependencies; ruff's `S` rules cover
+SAST.
 
 ### Layout
 
@@ -69,21 +71,22 @@ Follows the authz-service structure, without the web parts:
 ```
 src/usage_reporter/
   core/
-    model.py        # Transfer, Group, UsageRecord, AggregateResult, UpsertOutcome
+    model.py        # Transfer, Group, UsageRecord, AggregateResult, ReportOutcome
     ports.py        # TransferSource, GroupMapping, AccountingSink (Protocols)
     window.py       # window(), day_bounds(), as_utc()
     mapping.py      # group_from_attributes(attributes, known_projects)
     aggregate.py    # aggregate(transfers, mapping, days) -> AggregateResult
+    report.py       # report_usage(source, mapping, sink, days) -> RunSummary
   adapters/
     rucio.py        # RucioRestSource, RucioAttributeMapping (httpx)
     argo.py         # ArgoSink: look up, then POST once (httpx)
     token.py        # client-credentials tokens (ARGO per project, Rucio), refreshed on 401
-    resilience.py   # retry policy and per-run failure budget
+    resilience.py   # retry policy and per-run failure budget (step 7)
     stdout.py       # StdoutSink for dry-run
   settings.py       # pydantic-settings, secrets from env vars only
   main.py           # composition root and CLI entry point
 tests/unit/  tests/integration/
-docker/  docker-compose.yml  rucio.cfg  rucio-seed.py  realm.json  argo-stubs/
+docker/  docker-compose.yml  rucio.cfg  rucio-seed.py  realm.json  argo-stubs/  local.env
 Dockerfile  Makefile  pyproject.toml  uv.lock
 ```
 
@@ -108,7 +111,7 @@ def aggregate(
     ...
 
 class AccountingSink(Protocol):
-    def upsert(self, record: UsageRecord) -> UpsertOutcome: ...
+    def report(self, record: UsageRecord) -> ReportOutcome: ...  # CREATED, EXISTS, DRY_RUN
 ```
 
 ### Resilience
@@ -121,6 +124,7 @@ class AccountingSink(Protocol):
 | ARGO POST timeout | Never retry blindly: look the record up again, POST only if it is missing |
 | 401 mid-run | Fetch a new token once, retry once |
 | Other 4xx | Fail that record, continue, non-zero exit at the end |
+| ARGO 5xx, 401 or 403 after refresh | Abort the run (exit `4`) |
 
 Exit codes: `0` ok, `2` warnings (unmapped accounts), `3` some records failed,
 `4` aborted (dependency down), `1` config error.
@@ -134,6 +138,7 @@ client:
 
 ```
 REPORTER_RUCIO_HOST, REPORTER_RUCIO_ACCOUNT
+REPORTER_RUCIO_USERNAME, REPORTER_RUCIO_PASSWORD   # userpass until step 6
 REPORTER_ARGO_ENDPOINT=https://api.devel.acc.argo.grnet.gr
 REPORTER_ARGO_METRIC_DEFINITION_ID=6afc3e7801adaea4c9c12777
 REPORTER_ARGO_TOKEN_URL
@@ -141,7 +146,9 @@ REPORTER_PROJECTS='{"RI-SCALE_ENES": {"installation_id": "6afaff4e947efcc6dea636
                     "client_id": "...", "client_secret_env": "REPORTER_SECRET_ENES"}}'
 REPORTER_SECRET_ENES=...   # one secret per project, from the Kubernetes Secret
 REPORTER_LOOKBACK_DAYS=0  REPORTER_DRY_RUN=true   # 0: report yesterday only
-REPORTER_TIMEOUT_SECONDS=10  REPORTER_MAX_CONSECUTIVE_FAILURES=5
+REPORTER_DAY=2026-11-22                            # optional: one explicit day (re-run, backfill)
+REPORTER_TIMEOUT_SECONDS=10
+REPORTER_MAX_CONSECUTIVE_FAILURES=5                # step 7
 ```
 
 Projects missing from `REPORTER_PROJECTS` count as unmapped, so the job can
@@ -154,13 +161,14 @@ start with `RI-SCALE_ENES` alone.
 | `ruciodb`, `rucio-server` | Real Rucio API (release 41.2.1, as in dep-dlm-testbed). Before the server starts, `rucio-seed.py` bootstraps the database, accounts and attributes, and seeds mock `requests_history`. *Step 3.* |
 | `keycloak` | Client-credentials tokens (`realm.json`); 23.0.1, as in dep-dlm-testbed. ARGO stand-in in step 4, Rucio in step 6. |
 | `argo-stub` | WireMock with ARGO's metric listing and POST, from the devel OpenAPI spec. *Step 4.* |
-| `toxiproxy` | Latency, resets and timeouts between the reporter and both APIs. *Step 6.* |
+| `toxiproxy` | Latency, resets and timeouts between the reporter and both APIs. *Step 7.* |
 
 Integration tests start `docker/docker-compose.yml` through testcontainers
 (`DockerCompose`), as in authz-service, with a fixed seed day; set
-`REPORTER_TEST_RUCIO_URL` and `REPORTER_TEST_KEYCLOAK_URL` to reuse a stack
-started with `make up`. Full runs with real transfers belong in
-dep-dlm-testbed.
+`REPORTER_TEST_{RUCIO,KEYCLOAK,ARGO}_URL` to reuse a stack started with
+`make up`. `make run` runs the job against that stack with
+`docker/local.env` (dry-run by default). Full runs with real transfers
+belong in dep-dlm-testbed.
 
 ## Touch points
 
@@ -171,7 +179,7 @@ dep-dlm-testbed.
 | `docker/` | Compose stack, realm, ARGO stubs, Rucio seed |
 | `Dockerfile` | Slim, non-root image running `usage-reporter` |
 | `Makefile`, `pyproject.toml`, `uv.lock` | uv sync, lint, typecheck, test, up/down, image |
-| `.github/workflows/ci.yml` | Lint, typecheck, unit and integration tests, image build |
+| `.github/workflows/ci.yml` | Lint, typecheck, dependency audit, unit and integration tests, image build |
 
 ## Fallback / safety behavior
 
@@ -203,8 +211,8 @@ Test-first. Each case is written before the code that passes it.
 - **Integration:** full run against the compose stack (seeded Rucio, Keycloak,
   ARGO stub), asserting the exact requests the stub received; toxiproxy cases
   for slow and dropped connections.
-- **CI:** ruff, mypy (strict), import-linter, unit and integration tests, image
-  build on every pull request.
+- **CI:** ruff (incl. `S`), mypy (strict), import-linter, pip-audit, unit and
+  integration tests, image build and scan on every pull request.
 
 ## Sequencing
 
@@ -218,7 +226,7 @@ Technical Workshop).
 3. Compose stack with seeded (mock) Rucio history, and the Rucio adapter. *Done.*
 4. Token adapter (generic client credentials, cached until expiry, refreshed
    on 401) and ARGO adapter against the stub; `main` wiring and dry-run.
-   Rucio stays on userpass for now. *Token and ARGO adapters done.*
+   Rucio stays on userpass for now. *Done.*
 5. **10 December:** full run on mock data for `RI-SCALE_ENES` against ARGO
    devel, with GRNET's ENES credentials.
 6. Rucio on OIDC tokens, in line with DEP DLM's token-only objective (as in
@@ -239,9 +247,9 @@ convention, and the time-filter question to Rucio developers.
 
 ## Open questions
 
-- **Late-archived transfers:** if step 7 shows transfers archived after the
-  nightly run, add the previous day's difference (Rucio minus ARGO) to the
-  new day's value instead of patching.
+- **Late-archived transfers:** GRNET accepts the rare miss (23/11). Add the
+  previous day's difference (Rucio minus ARGO) to the new day's value only if
+  step 7 shows it matters; never patch.
 - **`group_id` and data ownership:** GRNET considers `group_id` not readily
   applicable until fair sharing and data ownership (per DEP or per use case)
   are clarified. If use cases drop out, records carry the project only and the
