@@ -28,12 +28,11 @@ typecheck: ## mypy (strict)
 test-unit: ## Unit tests only (no Docker)
 	$(UV) run pytest tests/unit
 
-test: ## Unit and integration tests (integration ones skip unless the stack is up)
+test: ## Unit and integration tests (integration starts Docker via testcontainers)
 	$(UV) run pytest tests/unit tests/integration
 
-test-integration: ## Integration tests; set REPORTER_TEST_RUCIO_URL and _KEYCLOAK_URL to reuse a running stack
-	REPORTER_TEST_RUCIO_URL=$${REPORTER_TEST_RUCIO_URL:-http://localhost:8090} \
-	  $(UV) run pytest tests/integration -m integration
+test-integration: ## Integration tests; set REPORTER_TEST_{RUCIO,KEYCLOAK,ARGO}_URL to reuse a running stack
+	$(UV) run pytest tests/integration -m integration
 
 coverage: ## Tests with coverage report
 	$(UV) run pytest tests/unit tests/integration --cov --cov-report=term-missing --cov-report=xml

@@ -77,8 +77,9 @@ def main() -> int:
             sink,
             days,
         )
-    except Exception:
-        log.exception("aborted")
+    except Exception as exc:
+        log.error("aborted: %s: %s", type(exc).__name__, exc)
+        log.debug("traceback", exc_info=True)
         return 4
     finally:
         rucio.close()
