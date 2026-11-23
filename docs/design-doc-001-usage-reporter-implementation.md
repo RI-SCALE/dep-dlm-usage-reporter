@@ -4,7 +4,8 @@
 - **Owner:** DEP DLM
 - **Related ADR(s):** [ADR-010](https://github.com/RI-SCALE/dep-dlm-testbed/blob/main/docs/adrs/adr-010-report-transfer-usage-to-argo.md) (report daily transfer usage to ARGO) and [Design-009](https://github.com/RI-SCALE/dep-dlm-testbed/blob/main/docs/design/design-doc-009-dep-dlm-transfer-usage-reporter-for-argo-accounting.md)
   (the reporter's behaviour), both in the DEP DLM testbed docs. Those say *what* the job
-  does; this doc says *how* this repository builds it.
+  does; this doc says *how* this repository builds it. Agreed ARGO facts
+  (IDs, auth, milestones) are in [argo-integration.md](argo-integration.md).
 
 ## Problem
 
@@ -20,9 +21,8 @@ fix:
 - **A local test stack.** There is no public ARGO image, and Rucio only moves
   requests into `requests_history` after real transfers (FTS), so integration
   tests need seeded data and a stub.
-- **Development order.** ARGO prerequisites (service account, metric
-  definition, installation IDs) are still pending, and should not block
-  development.
+- **Development order.** The ARGO client credentials are still pending, and
+  should not block development.
 
 ## Goals
 
@@ -68,20 +68,21 @@ Follows the authz-service structure, without the web parts:
 ```
 src/usage_reporter/
   core/
-    model.py        # Transfer, UsageRecord, Window, RunResult (frozen dataclasses)
+    model.py        # Transfer, Group, UsageRecord, AggregateResult, UpsertOutcome
     ports.py        # TransferSource, GroupMapping, AccountingSink (Protocols)
-    window.py       # window(today, lookback_days) -> list[date]
+    window.py       # window(), day_bounds(), as_utc()
+    mapping.py      # group_from_attributes(attributes, known_projects)
     aggregate.py    # aggregate(transfers, mapping, days) -> AggregateResult
   adapters/
     rucio.py        # RucioRestSource, RucioAttributeMapping (httpx)
     argo.py         # ArgoSink: search, POST, PATCH (httpx)
-    token.py        # client-credentials token, refreshed on 401
+    token.py        # client-credentials token per project, refreshed on 401
     resilience.py   # retry policy and per-run failure budget
     stdout.py       # StdoutSink for dry-run
   settings.py       # pydantic-settings, secrets from env vars only
   main.py           # composition root and CLI entry point
 tests/unit/  tests/integration/
-docker/  docker-compose.yml  realm.json  argo-stubs/  bootstrap-db.py
+docker/  docker-compose.yml  realm.json  argo-stubs/  rucio-seed.sql
 Dockerfile  Makefile  pyproject.toml  uv.lock
 ```
 
@@ -105,7 +106,7 @@ def aggregate(
     ...
 
 class AccountingSink(Protocol):
-    def upsert(self, record: UsageRecord) -> UpsertResult: ...
+    def upsert(self, record: UsageRecord) -> UpsertOutcome: ...
 ```
 
 ### Resilience
@@ -125,16 +126,24 @@ Exit codes: `0` ok, `2` warnings (unmapped accounts), `3` some records failed,
 ### Configuration
 
 Non-secret settings in a ConfigMap, secrets as environment variables from a
-Kubernetes Secret (synced from Vault where available):
+Kubernetes Secret (synced from Vault where available). ARGO credentials are
+per accounting project, so each project carries its installation and its own
+client:
 
 ```
 REPORTER_RUCIO_HOST, REPORTER_RUCIO_ACCOUNT
-REPORTER_ARGO_ENDPOINT, REPORTER_ARGO_METRIC_DEFINITION_ID
-REPORTER_ARGO_TOKEN_URL, REPORTER_ARGO_CLIENT_ID, REPORTER_ARGO_CLIENT_SECRET
-REPORTER_PROJECTS='{"enes": "<installation id>", ...}'
+REPORTER_ARGO_ENDPOINT=https://api.devel.acc.argo.grnet.gr
+REPORTER_ARGO_METRIC_DEFINITION_ID=6afc3e7801adaea4c9c12777
+REPORTER_ARGO_TOKEN_URL
+REPORTER_PROJECTS='{"RI-SCALE_ENES": {"installation_id": "6afaff4e947efcc6dea636e2",
+                    "client_id": "...", "client_secret_env": "REPORTER_SECRET_ENES"}}'
+REPORTER_SECRET_ENES=...   # one secret per project, from the Kubernetes Secret
 REPORTER_LOOKBACK_DAYS=2  REPORTER_DRY_RUN=true
 REPORTER_TIMEOUT_SECONDS=10  REPORTER_MAX_CONSECUTIVE_FAILURES=5
 ```
+
+Projects missing from `REPORTER_PROJECTS` count as unmapped, so the job can
+start with `RI-SCALE_ENES` alone.
 
 ### Local stack (`docker/docker-compose.yml`)
 
@@ -192,31 +201,39 @@ Test-first. Each case is written before the code that passes it.
 
 ## Sequencing
 
-Development doesn't wait for ARGO.
+Development doesn't wait for ARGO. Milestone: the pipeline validated with mock
+data for `RI-SCALE_ENES` against ARGO devel by 10 December 2026 (TCB
+Technical Workshop).
 
-1. Skeleton: `pyproject.toml` and `uv.lock` (uv), Makefile, CI, import-linter contracts.
-2. Core, test-first: `window`, `aggregate`, mapping rules.
-3. Compose stack and Rucio adapter, with integration tests on seeded history.
-4. ARGO adapter against the stub, plus resilience and toxiproxy tests.
-5. Dry-run against the real DEP Rucio (read-only); check totals against a
-   manual query.
-6. Testbed CronJob (dep-dlm-testbed) against ARGO devel once the service
-   account exists; rehearse a backfill there.
-7. Production CronJob (dep-dlm-deployment): a few days in dry-run, then live,
+1. Skeleton: `pyproject.toml` and `uv.lock` (uv), Makefile, CI, import-linter
+   contracts. *Done.*
+2. Core, test-first: `window`, `aggregate`, mapping rules. *Done.*
+3. Compose stack with seeded (mock) Rucio history, and the Rucio adapter.
+4. Token and ARGO adapters against the stub; `main` wiring and dry-run.
+5. **10 December:** full run on mock data for `RI-SCALE_ENES` against ARGO
+   devel, with GRNET's ENES credentials.
+6. Resilience and toxiproxy tests; dry-run against the real DEP Rucio
+   (read-only), checking totals against a manual query.
+7. Testbed CronJob (dep-dlm-testbed) against ARGO devel; rehearse a backfill.
+8. Production CronJob (dep-dlm-deployment): a few days in dry-run, then live,
    then backfill from the agreed start date.
 
-In parallel, outside this repository: ARGO service account and entitlements,
-the data transfer metric definition, installation IDs, the Rucio account
-attribute convention, and the time-filter question to Rucio developers.
+In parallel, outside this repository: ENES client credentials (GRNET), the
+`group_id` and data-ownership escalation, the Rucio account attribute
+convention, and the time-filter question to Rucio developers.
 
 ## Open questions
 
 - **ARGO search:** can it filter on installation, metric definition and
   `group_id` with equality? If not, the adapter lists the installation's
   metrics and filters client-side.
-- **Installations:** one `CERN-Rucio` installation for all four DEPs, or one
-  per DEP project? This decides whether `REPORTER_PROJECTS` maps to one ID or
-  four.
+- **`group_id` and data ownership:** GRNET considers `group_id` not readily
+  applicable until fair sharing and data ownership (per DEP or per use case)
+  are clarified. If use cases drop out, records carry the project only and the
+  `group_id` attribute becomes optional; the core changes little.
+- **Installations:** does `CERN-Rucio` (`6afaff4e947efcc6dea636e2`) serve all
+  four projects, or will each project get its own? `REPORTER_PROJECTS` handles
+  either.
 - **Rucio authentication:** OIDC token from DEP IAM, or userpass for the
   reporter account?
 - **Multi-hop transfers:** exclude intermediate hops, and how to recognise them
