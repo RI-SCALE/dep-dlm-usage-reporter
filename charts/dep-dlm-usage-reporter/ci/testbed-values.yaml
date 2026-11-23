@@ -1,0 +1,26 @@
+# Exercises every optional block (rendered and validated in CI), shaped like
+# the dep-dlm-testbed's values: private CA, secrets by reference, real dry-run.
+image:
+  digest: sha256:f1d62ceb3546a876011351811f290488286a69ee1601e338298671bf0895f1d7
+config:
+  REPORTER_DRY_RUN: "true"
+  REPORTER_RUCIO_HOST: http://rucio-server
+  REPORTER_RUCIO_TOKEN_URL: https://keycloak:8443/realms/rucio/protocol/openid-connect/token
+  REPORTER_RUCIO_CLIENT_ID: usage-reporter
+  REPORTER_RUCIO_SCOPE: "openid offline_access storage.read:/ storage.modify:/"
+  REPORTER_ARGO_METRIC_DEFINITION_ID: 6afc3e7801adaea4c9c12777
+  REPORTER_ARGO_TOKEN_URL: https://keycloak:8443/realms/rucio/protocol/openid-connect/token
+  REPORTER_PROJECTS: '{"RI-SCALE_ENES": {"installation_id": "6afaff4e947efcc6dea636e2", "client_id": "usage-reporter", "client_secret_env": "REPORTER_SECRET_ENES"}}'
+  REPORTER_TIMEOUT_SECONDS: 10
+secretEnv:
+  REPORTER_RUCIO_CLIENT_SECRET: { name: testbed-secrets, key: usage-reporter-client-secret }
+  REPORTER_SECRET_ENES: { name: testbed-secrets, key: usage-reporter-client-secret }
+extraEnv:
+  - { name: SSL_CERT_FILE, value: /etc/grid-security/certificates/tls_ca_bundle.pem }
+extraVolumes:
+  - name: certs
+    secret: { secretName: testbed-certs }
+extraVolumeMounts:
+  - { name: certs, mountPath: /etc/grid-security/certificates/tls_ca_bundle.pem, subPath: tls_ca_bundle.pem, readOnly: true }
+podAnnotations: { example.org/owner: dep-dlm }
+nodeSelector: { kubernetes.io/os: linux }

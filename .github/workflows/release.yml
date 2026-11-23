@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write        # GitHub Release
-      packages: write        # GHCR
+      packages: write        # GHCR (image and chart)
       id-token: write        # provenance
       attestations: write
     env:
@@ -25,8 +25,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
 
-      - name: Tag matches pyproject version
-        run: test "${GITHUB_REF_NAME#v}" = "$(uv version --short)"
+      - name: Tag matches pyproject and chart versions
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          test "$v" = "$(uv version --short)"
+          grep -qx "version: $v" charts/dep-dlm-usage-reporter/Chart.yaml
+          grep -qx "appVersion: \"$v\"" charts/dep-dlm-usage-reporter/Chart.yaml
 
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -69,9 +73,16 @@ jobs:
           sbom: true
           cache-from: type=gha
 
-      - name: GitHub Release with wheel and sdist
+      - uses: azure/setup-helm@v4
+      - name: Package and push chart to GHCR (OCI)
+        run: |
+          helm package charts/dep-dlm-usage-reporter -d dist-chart
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm push dist-chart/*.tgz "oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts"
+
+      - name: GitHub Release with wheel, sdist and chart
         run: |
           uv build
-          gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --verify-tag
+          gh release create "$GITHUB_REF_NAME" dist/* dist-chart/* --generate-notes --verify-tag
         env:
           GH_TOKEN: ${{ github.token }}

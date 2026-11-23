@@ -2,9 +2,11 @@ SHELL       := /usr/bin/env bash
 .SHELLFLAGS := -eu -o pipefail -c
 UV ?= uv
 COMPOSE := docker compose -f docker/docker-compose.yml
+CHART        := charts/dep-dlm-usage-reporter
+KUBE_VERSION ?= 1.30.0
 
 .DEFAULT_GOAL := help
-.PHONY: help sync lint format typecheck audit test-unit test test-integration coverage run up down image run-image
+.PHONY: help sync lint format typecheck audit test-unit test test-integration coverage run up down image run-image chart-lint
 
 help: ## List targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -58,3 +60,11 @@ run-image: image ## One run of the container against `make up` (docker/local.env
 	@rc=0; docker run --rm --network host \
 	  --env-file <(sed -E "s/^(REPORTER_PROJECTS=)'(.*)'$$/\1\2/" docker/local.env) \
 	  usage-reporter:dev || rc=$$?; echo "exit code $$rc"
+
+chart-lint: ## Helm lint (strict) and kubeconform on the rendered chart, default and ci/ values
+	helm lint --strict $(CHART)
+	helm template test $(CHART) | kubeconform -strict -summary -kubernetes-version $(KUBE_VERSION)
+	for f in $(CHART)/ci/*-values.yaml; do \
+	  helm lint --strict $(CHART) -f $$f; \
+	  helm template test $(CHART) -f $$f | kubeconform -strict -summary -kubernetes-version $(KUBE_VERSION); \
+	done

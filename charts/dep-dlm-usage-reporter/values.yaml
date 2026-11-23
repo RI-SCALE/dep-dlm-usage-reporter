@@ -1,0 +1,66 @@
+# Defaults are safe: dry-run, yesterday only, secrets by reference only.
+
+image:
+  repository: ghcr.io/ri-scale/dep-dlm-usage-reporter
+  tag: ""        # defaults to the chart's appVersion
+  digest: ""     # sha256:...; takes precedence over tag
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# 00:15 UTC: the run reports yesterday (Design-009).
+schedule: "15 0 * * *"
+timeZone: Etc/UTC
+suspend: false
+concurrencyPolicy: Forbid
+startingDeadlineSeconds: 3600
+successfulJobsHistoryLimit: 3
+failedJobsHistoryLimit: 5
+# No pod retries: a re-run is a deliberate REPORTER_DAY job, and the lookup
+# prevents duplicates. Exit 2 (unmapped accounts) also marks the Job failed.
+backoffLimit: 0
+activeDeadlineSeconds: 3600
+
+# Non-secret REPORTER_* settings, rendered into a ConfigMap. Names containing
+# SECRET or PASSWORD are rejected by values.schema.json; use secretEnv.
+config:
+  REPORTER_DRY_RUN: "true"
+  REPORTER_LOOKBACK_DAYS: "0"
+
+# Secrets by reference: env var -> key of an existing Secret
+# (e.g. from External Secrets). The chart never creates Secrets.
+secretEnv: {}
+#  REPORTER_RUCIO_CLIENT_SECRET: { name: usage-reporter, key: rucio-client-secret }
+#  REPORTER_SECRET_ENES:         { name: usage-reporter, key: argo-enes-client-secret }
+
+extraEnv: []          # e.g. SSL_CERT_FILE for a private CA
+extraVolumes: []      # e.g. a CA bundle from a Secret
+extraVolumeMounts: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { memory: 256Mi }
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile: { type: RuntimeDefault }
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: [ALL] }
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

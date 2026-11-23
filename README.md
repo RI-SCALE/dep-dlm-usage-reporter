@@ -63,10 +63,18 @@ and [ADR-010](https://github.com/RI-SCALE/dep-dlm-testbed/blob/main/docs/adrs/ad
 
 ## Releasing
 
-Bump the version, commit, push a `vX.Y.Z` tag; `release.yml` builds and
-scans the image, pushes it to GHCR and creates the GitHub Release.
+Bump the version in `pyproject.toml` and the chart, commit, push a `vX.Y.Z`
+tag; `release.yml` checks that all three match, scans the image, pushes the
+image and the Helm chart to GHCR and creates the GitHub Release (wheel,
+sdist, chart).
 
 ```
-uv version X.Y.Z && git commit -am "chore: release X.Y.Z"
+uv version X.Y.Z
+sed -i -E 's/^version: .*/version: X.Y.Z/; s/^appVersion: .*/appVersion: "X.Y.Z"/' \
+  charts/dep-dlm-usage-reporter/Chart.yaml
+git commit -am "chore(release): X.Y.Z"
 git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin main vX.Y.Z
 ```
+
+Image: `ghcr.io/ri-scale/dep-dlm-usage-reporter:X.Y.Z`.
+Chart: `helm install usage-reporter oci://ghcr.io/ri-scale/charts/dep-dlm-usage-reporter --version X.Y.Z`.
