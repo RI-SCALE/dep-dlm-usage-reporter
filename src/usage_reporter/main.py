@@ -11,6 +11,7 @@ import sys
 from datetime import UTC, datetime
 
 from pydantic import ValidationError
+from pydantic_settings import SettingsError
 
 from usage_reporter.adapters.argo import ArgoProject, ArgoSink
 from usage_reporter.adapters.rucio import (
@@ -61,7 +62,7 @@ def main() -> int:
     try:
         settings = Settings()
         sink: AccountingSink = StdoutSink() if settings.dry_run else _argo_sink(settings)
-    except (ValidationError, ConfigError) as exc:
+    except (ValidationError, SettingsError, ConfigError) as exc:
         log.error("config error: %s", exc)
         return 1
 

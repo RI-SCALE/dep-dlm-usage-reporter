@@ -7,6 +7,7 @@ from datetime import date
 
 import pytest
 from pydantic import ValidationError
+from pydantic_settings import SettingsError
 
 from usage_reporter.settings import ConfigError, Settings
 
@@ -81,3 +82,9 @@ def test_a_missing_project_secret_is_a_config_error(env: pytest.MonkeyPatch) -> 
 
 def test_secrets_are_not_shown_in_repr(env: pytest.MonkeyPatch) -> None:
     assert "rucio-pw" not in repr(Settings())
+
+
+def test_invalid_projects_json_is_a_settings_error(env: pytest.MonkeyPatch) -> None:
+    env.setenv("REPORTER_PROJECTS", "'{not json}'")
+    with pytest.raises(SettingsError):
+        Settings()

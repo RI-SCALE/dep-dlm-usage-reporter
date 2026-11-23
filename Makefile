@@ -1,10 +1,10 @@
-# usage-reporter (Design-001). Thin index over uv; `make help` lists targets.
-
+SHELL       := /usr/bin/env bash
+.SHELLFLAGS := -eu -o pipefail -c
 UV ?= uv
 COMPOSE := docker compose -f docker/docker-compose.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help sync lint format typecheck test-unit test test-integration coverage run up down
+.PHONY: help sync lint format typecheck audit test-unit test test-integration coverage run up down image run-image
 
 help: ## List targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -43,7 +43,7 @@ coverage: ## Tests with coverage report
 	$(UV) run pytest tests/unit tests/integration --cov --cov-report=term-missing --cov-report=xml
 
 run: ## One run against `make up` (docker/local.env); REPORTER_DRY_RUN=false make run posts to the stub
-	$(UV) run --env-file docker/local.env usage-reporter; echo "exit code $$?"
+	@rc=0; $(UV) run --env-file docker/local.env usage-reporter || rc=$$?; echo "exit code $$rc"
 
 up: ## Start the local stack (Rucio + seeded history, Keycloak) and wait until healthy
 	$(COMPOSE) up -d --wait
@@ -53,3 +53,8 @@ down: ## Stop the local stack and wipe volumes
 
 image: ## Build the container image (usage-reporter:dev)
 	docker build -t usage-reporter:dev .
+
+run-image: image ## One run of the container against `make up` (docker/local.env)
+	@rc=0; docker run --rm --network host \
+	  --env-file <(sed -E "s/^(REPORTER_PROJECTS=)'(.*)'$$/\1\2/" docker/local.env) \
+	  usage-reporter:dev || rc=$$?; echo "exit code $$rc"
