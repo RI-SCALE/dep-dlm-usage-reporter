@@ -19,6 +19,7 @@ import httpx
 
 from usage_reporter.core.mapping import group_from_attributes
 from usage_reporter.core.model import Group, Transfer
+from usage_reporter.core.ports import GroupMapping, TransferSource
 
 NDJSON = "application/x-json-stream"
 JSON = "application/json"
@@ -97,7 +98,7 @@ def parse_rucio_time(value: str | None) -> datetime | None:
     return moment.replace(tzinfo=UTC) if moment.tzinfo is None else moment.astimezone(UTC)
 
 
-class RucioRestSource:
+class RucioRestSource(TransferSource):
     """TransferSource over GET /requests/history/list.
 
     The endpoint has no time filter and takes one source/destination pair per
@@ -139,7 +140,7 @@ class RucioRestSource:
             offset += self._page_size
 
 
-class RucioAttributeMapping:
+class RucioAttributeMapping(GroupMapping):
     """GroupMapping over GET /accounts/{account}/attr/, one lookup per account."""
 
     def __init__(self, client: RucioClient, known_projects: Collection[str]) -> None:

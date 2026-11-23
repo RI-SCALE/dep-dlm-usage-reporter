@@ -20,6 +20,7 @@ from typing import Any
 import httpx
 
 from usage_reporter.core.model import UpsertOutcome, UsageRecord
+from usage_reporter.core.ports import AccountingSink
 
 SEARCH = "/accounting-system/metrics/search"
 MAY_HAVE_LANDED = (httpx.ReadTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError)
@@ -50,7 +51,7 @@ def _same_instant(a: str, b: str) -> bool:
     return datetime.fromisoformat(a) == datetime.fromisoformat(b)
 
 
-class ArgoSink:
+class ArgoSink(AccountingSink):
     """AccountingSink over ARGO's search, POST and PATCH."""
 
     def __init__(
