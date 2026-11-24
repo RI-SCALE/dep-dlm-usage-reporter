@@ -66,7 +66,8 @@ and [ADR-010](https://github.com/RI-SCALE/dep-dlm-testbed/blob/main/docs/adrs/ad
 Bump the version in `pyproject.toml` and the chart, commit, push a `vX.Y.Z`
 tag; `release.yml` checks that all three match, scans the image, pushes the
 image and the Helm chart to GHCR and creates the GitHub Release (wheel,
-sdist, chart).
+sdist, chart). Every artifact carries a build-provenance attestation
+(from v0.3.0 on).
 
 ```
 uv version X.Y.Z
@@ -78,3 +79,12 @@ git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin main vX.Y.Z
 
 Image: `ghcr.io/ri-scale/dep-dlm-usage-reporter:X.Y.Z`.
 Chart: `helm install usage-reporter oci://ghcr.io/ri-scale/charts/dep-dlm-usage-reporter --version X.Y.Z`.
+
+Verify (needs gh auth login or GH_TOKEN):
+
+```
+gh release download vX.Y.Z --repo RI-SCALE/dep-dlm-usage-reporter --pattern '*.whl'
+gh attestation verify usage_reporter-X.Y.Z-py3-none-any.whl --repo RI-SCALE/dep-dlm-usage-reporter
+gh attestation verify oci://ghcr.io/ri-scale/dep-dlm-usage-reporter:X.Y.Z --repo RI-SCALE/dep-dlm-usage-reporter
+gh attestation verify oci://ghcr.io/ri-scale/charts/dep-dlm-usage-reporter:X.Y.Z --repo RI-SCALE/dep-dlm-usage-reporter
+```
