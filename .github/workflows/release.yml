@@ -19,18 +19,18 @@ jobs:
       packages: write        # GHCR (image and chart)
       id-token: write        # provenance
       attestations: write
-    env:
-      IMAGE: ghcr.io/${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
 
-      - name: Tag matches pyproject and chart versions
+      - name: Tag matches pyproject and chart versions; lowercase GHCR names
         run: |
           v="${GITHUB_REF_NAME#v}"
           test "$v" = "$(uv version --short)"
           grep -qx "version: $v" charts/dep-dlm-usage-reporter/Chart.yaml
           grep -qx "appVersion: \"$v\"" charts/dep-dlm-usage-reporter/Chart.yaml
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "CHARTS=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts" >> "$GITHUB_ENV"
 
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -62,6 +62,7 @@ jobs:
           exit-code: "1"
 
       - name: Push multi-arch image
+        id: image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -72,23 +73,44 @@ jobs:
           provenance: mode=max
           sbom: true
           cache-from: type=gha
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
 
       - uses: azure/setup-helm@v4
         with:
           version: v3.19.0   # Helm 4 has failed against GHCR on push
       - name: Package and push chart to GHCR (OCI), with retries
+        id: chart
         run: |
           helm package charts/dep-dlm-usage-reporter -d dist-chart
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
           for wait in 15 30 0; do
-            helm push dist-chart/*.tgz "oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts" && exit 0
+            if out=$(helm push dist-chart/*.tgz "oci://${CHARTS}" 2>&1); then
+              echo "$out"
+              echo "digest=$(sed -n 's/^Digest: //p' <<<"$out")" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "$out"
             [ "$wait" -gt 0 ] && { echo "push failed, retrying in ${wait}s"; sleep "$wait"; }
           done
           exit 1
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.CHARTS }}/dep-dlm-usage-reporter
+          subject-digest: ${{ steps.chart.outputs.digest }}
+          push-to-registry: true
+
+      - run: uv build
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*
+            dist-chart/*.tgz
 
       - name: GitHub Release with wheel, sdist and chart
-        run: |
-          uv build
-          gh release create "$GITHUB_REF_NAME" dist/* dist-chart/* --generate-notes --verify-tag
+        run: gh release create "$GITHUB_REF_NAME" dist/* dist-chart/* --generate-notes --verify-tag
         env:
           GH_TOKEN: ${{ github.token }}
