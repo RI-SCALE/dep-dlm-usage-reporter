@@ -98,6 +98,8 @@ make test-integration  # integration tests
 make help              # all targets
 ```
 
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for layout, rules and style.
+
 ## Releasing
 
 Bump the version in `pyproject.toml` and the chart, commit, push a `vX.Y.Z`
