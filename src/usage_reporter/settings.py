@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     rucio_client_id: str
     rucio_client_secret: SecretStr
     rucio_scope: str | None = None
+    rucio_resource: str | None = None  # RFC 8707; sets the token's aud (EGI Check-in, LS AAI)
 
     argo_endpoint: str = "https://api.devel.acc.argo.grnet.gr"
     argo_metric_definition_id: str

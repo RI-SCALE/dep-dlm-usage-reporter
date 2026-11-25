@@ -28,12 +28,17 @@ class ClientCredentials:
         client_secret: str,
         *,
         scope: str | None = None,
+        resource: str | None = None,
         timeout_seconds: float = 10.0,
         transport: httpx.BaseTransport | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._url = token_url
-        self._form = {"grant_type": "client_credentials"} | ({"scope": scope} if scope else {})
+        self._form = (
+            {"grant_type": "client_credentials"}
+            | ({"scope": scope} if scope else {})
+            | ({"resource": resource} if resource else {})  # RFC 8707 audience
+        )
         self._http = httpx.Client(
             auth=httpx.BasicAuth(client_id, client_secret),
             timeout=timeout_seconds,

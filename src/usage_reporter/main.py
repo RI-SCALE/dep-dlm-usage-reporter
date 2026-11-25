@@ -74,6 +74,7 @@ def main() -> int:
         settings.rucio_client_id,
         settings.rucio_client_secret.get_secret_value(),
         scope=settings.rucio_scope,
+        resource=settings.rucio_resource,
         timeout_seconds=settings.timeout_seconds,
     )
     rucio = RucioClient(

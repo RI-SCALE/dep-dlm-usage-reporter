@@ -75,6 +75,20 @@ class TestClientCredentials:
         _credentials(idp).token()
         assert parse_qs(idp.requests[0].content.decode()) == {"grant_type": ["client_credentials"]}
 
+    def test_sends_the_resource_when_configured(self) -> None:
+        idp = FakeIdP()
+        _credentials(idp, scope="openid", resource="https://fts.example.org/").token()
+        assert parse_qs(idp.requests[0].content.decode()) == {
+            "grant_type": ["client_credentials"],
+            "scope": ["openid"],
+            "resource": ["https://fts.example.org/"],
+        }
+
+    def test_omits_an_empty_resource(self) -> None:
+        idp = FakeIdP()
+        _credentials(idp, resource="").token()
+        assert parse_qs(idp.requests[0].content.decode()) == {"grant_type": ["client_credentials"]}
+
     def test_reuses_the_token_until_shortly_before_expiry(self) -> None:
         idp, clock = FakeIdP(expires_in=3600), Clock()
         credentials = _credentials(idp, clock)
@@ -177,3 +191,34 @@ class TestTokenAuth:
         with _api_client(api, auth) as client:
             client.get("/rses/")
         assert api.seen == ["tok-1"]
+
+
+def _capture(seen: dict[str, str]) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(httpx.QueryParams(request.content.decode()))
+        return httpx.Response(200, json={"access_token": "t", "expires_in": 3600})
+
+    return httpx.MockTransport(handler)
+
+
+def test_resource_is_sent_when_set() -> None:
+    seen: dict[str, str] = {}
+    ClientCredentials(
+        "https://idp/token",
+        "c",
+        "s",
+        scope="openid",
+        resource="https://fts.example.org/",
+        transport=_capture(seen),
+    ).token()
+    assert seen == {
+        "grant_type": "client_credentials",
+        "scope": "openid",
+        "resource": "https://fts.example.org/",
+    }
+
+
+def test_empty_resource_is_not_sent() -> None:
+    seen: dict[str, str] = {}
+    ClientCredentials("https://idp/token", "c", "s", resource="", transport=_capture(seen)).token()
+    assert "resource" not in seen
