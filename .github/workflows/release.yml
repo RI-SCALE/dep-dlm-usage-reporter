@@ -17,7 +17,7 @@ jobs:
     permissions:
       contents: write        # GitHub Release
       packages: write        # GHCR (image and chart)
-      id-token: write        # provenance
+      id-token: write        # provenance and SBOM attestations
       attestations: write
     steps:
       - uses: actions/checkout@v4
@@ -79,6 +79,20 @@ jobs:
           subject-digest: ${{ steps.image.outputs.digest }}
           push-to-registry: true
 
+      - name: SBOM of the pushed image (SPDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.image.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+      - uses: actions/attest-sbom@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+
       - uses: azure/setup-helm@v4
         with:
           version: v3.19.0   # Helm 4 has failed against GHCR on push
@@ -110,7 +124,7 @@ jobs:
             dist/*
             dist-chart/*.tgz
 
-      - name: GitHub Release with wheel, sdist and chart
-        run: gh release create "$GITHUB_REF_NAME" dist/* dist-chart/* --generate-notes --verify-tag
+      - name: GitHub Release with wheel, sdist, chart and image SBOM
+        run: gh release create "$GITHUB_REF_NAME" dist/* dist-chart/* sbom.spdx.json --generate-notes --verify-tag
         env:
           GH_TOKEN: ${{ github.token }}

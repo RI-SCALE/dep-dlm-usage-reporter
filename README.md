@@ -103,8 +103,9 @@ make help              # all targets
 Bump the version in `pyproject.toml` and the chart, commit, push a `vX.Y.Z`
 tag; `release.yml` checks that all three match, scans the image, pushes the
 image and the Helm chart to GHCR and creates the GitHub Release (wheel,
-sdist, chart). Every artifact carries a build-provenance attestation
-(from v0.3.0 on).
+sdist, chart, image SBOM). Every artifact carries a build-provenance
+attestation (from v0.3.0 on); the image also carries a signed SPDX SBOM
+(from v0.4.0 on).
 
 ```bash
 uv version X.Y.Z
@@ -124,4 +125,7 @@ gh release download vX.Y.Z --repo RI-SCALE/dep-dlm-usage-reporter --pattern '*.w
 gh attestation verify usage_reporter-X.Y.Z-py3-none-any.whl --repo RI-SCALE/dep-dlm-usage-reporter
 gh attestation verify oci://ghcr.io/ri-scale/dep-dlm-usage-reporter:X.Y.Z --repo RI-SCALE/dep-dlm-usage-reporter
 gh attestation verify oci://ghcr.io/ri-scale/charts/dep-dlm-usage-reporter:X.Y.Z --repo RI-SCALE/dep-dlm-usage-reporter
+# image SBOM
+gh attestation verify oci://ghcr.io/ri-scale/dep-dlm-usage-reporter:X.Y.Z --repo RI-SCALE/dep-dlm-usage-reporter \
+  --predicate-type https://spdx.dev/Document/v2.3
 ```
