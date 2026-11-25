@@ -1,4 +1,4 @@
-"""OAuth2 client-credentials tokens for ARGO (and Rucio from step 6).
+"""OAuth2 client-credentials tokens for ARGO and Rucio.
 
 `ClientCredentials` fetches and caches one client's token; `TokenAuth` puts it
 on every request of an httpx client and fetches a new one once on 401.
