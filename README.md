@@ -3,6 +3,8 @@
 Daily job that reports DEP DLM data-transfer usage from Rucio to ARGO Accounting,
 per DEP project and use case (RI-SCALE). Design: [Design-001](docs/design-doc-001-usage-reporter-implementation.md).
 
+Developed within RI-SCALE WP2 (DEP data lifecycle management).
+
 ## How it works
 
 Every night at 01:00 UTC the job reports yesterday's usage once, per project
