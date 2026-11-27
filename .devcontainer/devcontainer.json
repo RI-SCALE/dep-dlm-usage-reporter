@@ -11,7 +11,7 @@
   "containerEnv": {
     "UV_LINK_MODE": "copy"
   },
-  "postCreateCommand": "echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts && make sync",
+  "postCreateCommand": "echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts >/dev/null && make sync hooks",
   "forwardPorts": [8080],
   "portsAttributes": {
     "8080": { "label": "Keycloak" }
