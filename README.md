@@ -92,9 +92,8 @@ Exit codes: `0` ok, `1` configuration error, `2` unmapped accounts,
 Needs [uv](https://docs.astral.sh/uv/) (Python 3.12) and, for integration tests, Docker.
 
 ```bash
-make sync              # create .venv from uv.lock (Python 3.12)
-make lint              # ruff and the import contracts
-make typecheck         # mypy (strict)
+make sync hooks        # once: .venv from uv.lock (Python 3.12), git pre-commit hook
+make check             # ruff, format, import contracts, mypy (strict)
 make test-unit         # unit tests
 make test-integration  # integration tests
 make help              # all targets

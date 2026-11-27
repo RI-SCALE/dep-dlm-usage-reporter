@@ -18,8 +18,7 @@ jobs:
         with:
           enable-cache: true
       - run: make sync
-      - run: make lint
-      - run: make typecheck
+      - run: make check
       - run: make audit
       - run: make test-unit
 

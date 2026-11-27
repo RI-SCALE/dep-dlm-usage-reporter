@@ -26,8 +26,8 @@ docs/          Design-001, ARGO integration notes, this guide
 ```
 
 Dependencies point inwards: `adapters` and `main` import `core`, never
-the other way round ([ports and adapters][hexagonal]); `make lint`
-enforces this with import contracts.
+the other way round ([ports and adapters][hexagonal]); the import
+contracts (`make check`) enforce this.
 
 ## Rules worth knowing
 
@@ -61,9 +61,11 @@ enforces this with import contracts.
   `transport` argument and time through a fake clock.
 - Integration tests when an adapter's contract with Rucio, the IdP or
   ARGO changes (`make test-integration`, needs Docker).
-- CI (`.github/workflows/ci.yml`) runs `lint`, `typecheck`, `audit`,
-  `test-unit`, `test-integration`, the image build and `chart-lint`;
-  run the same make targets locally before opening a PR.
+- Run `make hooks` once: ruff, the format check, the import contracts and
+  mypy then run on every commit (`make format` fixes what ruff reports).
+- CI (`.github/workflows/ci.yml`) runs `check`, `audit`, `test-unit`,
+  `test-integration`, the image build and `chart-lint`; run the same make
+  targets locally before opening a PR.
 
 ## Commits and releases
 
