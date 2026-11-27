@@ -5,6 +5,11 @@ COMPOSE := docker compose -f docker/docker-compose.yml
 CHART        := charts/dep-dlm-usage-reporter
 KUBE_VERSION ?= 1.30.0
 
+# pin the current release (https://github.com/aquasecurity/trivy/releases)
+TRIVY_VERSION ?= 0.76.2
+TRIVY := docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+           -v $(HOME)/.cache/trivy:/root/.cache aquasec/trivy:$(TRIVY_VERSION)
+
 .DEFAULT_GOAL := help
 
 .PHONY: help
@@ -21,8 +26,13 @@ hooks: ## Install the git pre-commit hook
 	$(UV) run pre-commit install
 
 .PHONY: check
-check: ## ruff, format, import contracts and mypy (strict) via pre-commit
+check: ## ruff, format, import contracts, mypy (strict) and hadolint via pre-commit
 	$(UV) run pre-commit run --all-files
+
+.PHONY: scan
+scan: ## Trivy: secrets and fixable HIGH/CRITICAL vulnerabilities in usage-reporter:dev (make image first)
+	$(TRIVY) image --scanners vuln,secret --severity HIGH,CRITICAL \
+	  --ignore-unfixed --exit-code 1 usage-reporter:dev
 
 .PHONY: format
 format: ## Auto-fix ruff findings and formatting

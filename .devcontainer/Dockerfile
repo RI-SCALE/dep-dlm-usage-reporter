@@ -8,5 +8,6 @@ RUN rm -f /etc/apt/sources.list.d/yarn.list
 # uv, pinned to the minor version the build backend allows (uv_build <0.12).
 COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /uvx /usr/local/bin/
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN curl -fsSL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz \
     | tar xz -C /usr/local/bin kubeconform
