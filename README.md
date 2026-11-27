@@ -93,9 +93,10 @@ Needs [uv](https://docs.astral.sh/uv/) (Python 3.12) and, for integration tests,
 
 ```bash
 make sync hooks        # once: .venv from uv.lock (Python 3.12), git pre-commit hook
-make check             # ruff, format, import contracts, mypy (strict)
+make check             # ruff, format, import contracts, mypy (strict), hadolint
 make test-unit         # unit tests
 make test-integration  # integration tests
+make image scan        # build usage-reporter:dev, scan it with Trivy
 make help              # all targets
 ```
 
@@ -104,11 +105,11 @@ See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for layout, rules and style.
 ## Releasing
 
 Bump the version in `pyproject.toml` and the chart, commit, push a `vX.Y.Z`
-tag; `release.yml` checks that all three match, scans the image, pushes the
-image and the Helm chart to GHCR and creates the GitHub Release (wheel,
-sdist, chart, image SBOM). Every artifact carries a build-provenance
-attestation (from v0.3.0 on); the image also carries a signed SPDX SBOM
-(from v0.4.0 on).
+tag; `release.yml` runs CI first (including the image scan), checks that all
+three versions match, pushes the image and the Helm chart to GHCR and creates
+the GitHub Release (wheel, sdist, chart, image SBOM). Every artifact carries
+a build-provenance attestation (from v0.3.0 on); the image also carries a
+signed SPDX SBOM (from v0.4.0 on).
 
 ```bash
 uv version X.Y.Z

@@ -61,11 +61,12 @@ contracts (`make check`) enforce this.
   `transport` argument and time through a fake clock.
 - Integration tests when an adapter's contract with Rucio, the IdP or
   ARGO changes (`make test-integration`, needs Docker).
-- Run `make hooks` once: ruff, the format check, the import contracts and
-  mypy then run on every commit (`make format` fixes what ruff reports).
+- Run `make hooks` once: ruff, the format check, the import contracts, mypy
+  and hadolint then run on every commit (`make format` fixes what ruff
+  reports).
 - CI (`.github/workflows/ci.yml`) runs `check`, `audit`, `test-unit`,
-  `test-integration`, the image build and `chart-lint`; run the same make
-  targets locally before opening a PR.
+  `test-integration`, the image build and scan (`make image scan`) and
+  `chart-lint`; run the same make targets locally before opening a PR.
 
 ## Commits and releases
 

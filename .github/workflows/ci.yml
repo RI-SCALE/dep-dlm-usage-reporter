@@ -40,9 +40,16 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          push: false
+          load: true
+          tags: usage-reporter:dev
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ github.run_id }}
+          restore-keys: trivy-db-
+      - run: make scan
 
   chart:
     runs-on: ubuntu-latest
